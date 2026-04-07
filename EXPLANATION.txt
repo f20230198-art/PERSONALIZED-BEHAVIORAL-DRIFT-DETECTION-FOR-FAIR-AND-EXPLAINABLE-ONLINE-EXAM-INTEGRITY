@@ -1,0 +1,626 @@
+================================================================================
+  PERSONALIZED BEHAVIORAL DRIFT DETECTION FOR FAIR AND EXPLAINABLE
+  ONLINE EXAM INTEGRITY
+
+  A Complete Conceptual Explanation
+  LAK 2026 Conference Submission
+  Authors: Srivathsa H, Mili Mohan, Irene M, Kalyani B S
+  BITS Pilani Dubai Campus
+================================================================================
+
+python main.py --config configs/config.yaml --mode all --force-retrain
+
+TABLE OF CONTENTS
+-----------------
+  1. What Is This Project About?
+  2. The Real-World Problem
+  3. Our Approach (The Big Idea)
+  4. The Datasets We Use
+  5. How We Prepare the Data (Preprocessing Pipeline)
+  6. The Models (What They Are and Why We Chose Them)
+  7. How We Detect Anomalies (Drift Scoring)
+  8. Fairness: Making Sure the System Is Not Biased
+  9. Explainability: Telling Instructors WHY a Student Was Flagged
+  10. How We Evaluate Everything
+  11. Key Concepts and Terminology Glossary
+
+
+================================================================================
+1. WHAT IS THIS PROJECT ABOUT?
+================================================================================
+
+This project builds an intelligent system that monitors online exams by
+analyzing how students BEHAVE during an exam (their clicks, timing, navigation
+patterns) rather than watching them through a camera.
+
+The central question the system answers is:
+
+    "Does this student deviate from THEMSELVES?"
+
+NOT: "Does this student deviate from the class average?"
+
+This is a crucial distinction. Every student has their own rhythm, pace, and
+habits when taking an exam. Some people naturally rush. Some people revisit
+questions multiple times. Some people change their answers a lot. None of these
+behaviors are inherently suspicious -- they're just personal style.
+
+Our system learns what is "normal" for EACH individual student based on their
+past exam history. When a new exam session looks very different from that
+student's own historical pattern, it gets flagged for instructor review.
+
+
+================================================================================
+2. THE REAL-WORLD PROBLEM
+================================================================================
+
+When universities moved exams online (especially during COVID-19), they needed
+ways to prevent cheating. The current solutions are deeply flawed:
+
+PROBLEM 1: Commercial Proctoring Tools (ProctorU, Respondus, ExamSoft)
+  - Use webcams, eye-tracking, screen recording, audio monitoring
+  - Disproportionately flag students with darker skin tones (facial recognition
+    bias), students with disabilities, and students in non-standard environments
+  - Create an adversarial "Big Brother" surveillance relationship between
+    students and their university
+  - Massive privacy invasion -- recording students in their homes
+
+PROBLEM 2: Simple Rule-Based Systems
+  - Apply the same rigid rules to everyone: "if response time < 5 seconds,
+    flag as suspicious"
+  - Ignore that different students naturally have different speeds and styles
+  - Students who are naturally fast get flagged; actual cheaters who are
+    moderately fast get missed
+  - No ability to explain WHY a student was flagged
+
+PROBLEM 3: Population-Level Anomaly Detection (Prior Research)
+  - Methods like Isolation Forest or One-Class SVM compare each student to
+    the CLASS AVERAGE
+  - A student who always finishes exams in 15 minutes looks "suspicious"
+    compared to the 45-minute class average -- but they've ALWAYS done this
+  - These methods don't account for individual behavioral baselines
+
+OUR SOLUTION addresses all three problems:
+  - Privacy-preserving: only uses clickstream data (no cameras, no audio)
+  - Personalized: compares each student to their own history
+  - Fair: explicit mathematical constraints prevent demographic bias
+  - Explainable: every flag comes with a human-readable reason
+
+
+================================================================================
+3. OUR APPROACH (THE BIG IDEA)
+================================================================================
+
+The system has four main stages, flowing like a pipeline:
+
+  Raw Clickstream Data
+       |
+       v
+  [1] FEATURE EXTRACTION -- Turn raw clicks into meaningful behavioral numbers
+       |
+       v
+  [2] LSTM AUTOENCODER -- Learn what "normal" looks like for each student
+       |
+       v
+  [3] DRIFT SCORING + FAIRNESS -- Score how "different" a new session is,
+       |                           with bias correction
+       v
+  [4] SHAP EXPLAINABILITY -- Explain WHY a session was flagged
+
+Let's break each stage down:
+
+STAGE 1: FEATURE EXTRACTION
+----------------------------
+From raw clickstream logs (timestamps, answers, navigation), we extract
+two levels of features:
+
+  SESSION-LEVEL FEATURES (10 features, for baseline models):
+  1.  response_time_mean    -- How fast is the student overall?
+  2.  response_time_std     -- How consistent is their pacing?
+  3.  answer_change_rate    -- How often do they change answers?
+  4.  keystroke_rhythm_var   -- Are their inter-action intervals regular or erratic?
+  5.  pause_frequency       -- How often do they pause for 30+ seconds?
+  6.  question_seq_deviation -- Revisit ratio: fraction of questions revisited
+                               after visiting other questions (NOT sequential
+                               index deviation, which assumes ordered IDs)
+  7.  response_time_entropy -- Shannon entropy of binned response times
+  8.  speed_score           -- Questions answered per minute
+  9.  burst_ratio           -- Fraction of inter-action gaps < 2 seconds
+  10. response_time_iqr     -- Interquartile range of response times
+
+  QUESTION-LEVEL FEATURES (10 features per question, for LSTM/Transformer):
+  1.  time_per_question      -- Seconds spent on this question
+  2.  answer_change_count    -- Number of answer changes for this question
+  3.  is_revisited           -- 1.0 if question was revisited after others
+  4.  inter_question_gap     -- Seconds between previous question end and this start
+  5.  visit_count            -- Total actions recorded for this question
+  6.  relative_position      -- Normalized position in session (0 -> 1)
+  7.  response_time_zscore   -- Z-score of this question's time within session
+  8.  is_burst               -- 1.0 if response time < session median / 3
+  9.  cumulative_speed       -- Cumulative questions/minute up to this point
+  10. gap_ratio              -- This gap / session mean gap
+
+These features capture four independent axes of exam behavior:
+  - TIME dimension (features 1-2, 7-10): Speed, consistency, and rhythm
+  - UNCERTAINTY dimension (features 3-4): Hesitation and answer changes
+  - NAVIGATION dimension (features 5-6): How they move through the exam
+  - CONTEXT dimension (question-level only): Position-aware and cumulative signals
+
+Each exam session becomes a matrix of shape (Q x 10), where Q is the number
+of questions (between 20 and 50, padded to 50 for consistency).
+
+STAGE 2: LSTM AUTOENCODER (The Core Model)
+-------------------------------------------
+What is an Autoencoder?
+  An autoencoder is a neural network that learns to COMPRESS data into a
+  small representation and then RECONSTRUCT it back. Think of it like this:
+
+    Input --> [Compress to small code] --> [Expand back] --> Output
+
+  The key insight: if the autoencoder is trained ONLY on normal exam sessions,
+  it learns to compress and reconstruct NORMAL behavior very well. When you
+  feed it an ABNORMAL session, it FAILS to reconstruct it properly -- the
+  reconstruction error is high. That error IS our anomaly signal.
+
+  This is called "self-supervised learning" because we don't need any labels
+  saying "this session was cheating." We only need examples of normal behavior.
+
+Why LSTM (Long Short-Term Memory)?
+  An exam is a SEQUENCE of actions over time. The ORDER matters.
+
+  Example: Spending extra time on question 12 after revisiting question 5
+  is behaviorally different from spending extra time on question 12 as
+  your first action.
+
+  A regular (feedforward) neural network would treat the session as a flat
+  bag of numbers -- losing all temporal ordering information. An LSTM
+  processes the sequence step-by-step, maintaining a "memory" of what came
+  before. This lets it capture patterns like:
+    - "This student usually speeds up toward the end"
+    - "This student typically revisits the last 3 questions"
+    - "This student has a consistent rhythm throughout"
+
+Our Architecture:
+  Encoder: 2-layer LSTM (hidden_dim=48) --> Linear layer --> latent code (dim=16)
+  Decoder: Linear layer --> 2-layer LSTM (hidden_dim=48) --> reconstructed session
+
+  The tight bottleneck of dimension 16 FORCES the network to learn a compressed
+  representation of normal behavior. A too-large latent space (e.g. 32) allows
+  near-identity reconstruction, destroying the error gap between normal and
+  anomalous sessions. The reduced hidden_dim=48 further constrains capacity.
+
+STAGE 3: DRIFT SCORING
+-----------------------
+When a student takes a new exam, we pass their session through the autoencoder
+and measure the reconstruction error (MSE = Mean Squared Error between input
+and output). This raw error is then converted into a "drift score" using
+z-score normalization:
+
+  Personal drift score = (error - student's_mean_error) / student's_std_error
+  Population drift score = (error - everyone's_mean_error) / everyone's_std_error
+
+The final score BLENDS these two based on how much history the student has:
+
+  Final score = lambda * personal_score + (1-lambda) * population_score
+
+  where lambda = min(1, number_of_sessions / 5)
+
+  - Student with 0 prior sessions: lambda=0 (pure population baseline)
+  - Student with 3 prior sessions: lambda=0.6 (60% personal, 40% population)
+  - Student with 5+ prior sessions: lambda=1.0 (100% personal)
+
+This "progressive personalization" ensures every student gets the best
+possible scoring given their available history, with no hard cutoff.
+
+Sessions exceeding a threshold are flagged for instructor review.
+
+STAGE 4: FAIRNESS CALIBRATION + SHAP EXPLAINABILITY
+(Detailed in Sections 8 and 9 below)
+
+
+================================================================================
+4. THE DATASETS WE USE
+================================================================================
+
+DATASET 1: EdNet-KT2 (Primary Behavioral Data)
+------------------------------------------------
+Location: EdNet-KT2/KT2/ (61,732 individual student CSV files)
+Source: Santa mobile tutoring app (South Korea)
+Each file: One student's complete interaction history
+Each row: timestamp, question_id, answer_selected, answer_changed, elapsed_time
+
+Why EdNet?
+  - It's the ONLY large-scale public dataset with question-level clickstream
+    data (timestamps, answer changes, navigation)
+  - 61,732 students gives us enough data for personalization
+  - Answer change tracking is built into the data
+
+Important limitation (acknowledged in our paper):
+  EdNet is a TUTORING app, not a proctored exam. Sessions are self-paced
+  and low-stakes. We treat contiguous question bundles as "pseudo-exam
+  sessions." Real exam clickstream data with verified cheating labels
+  simply does not exist publicly.
+
+We sample 15,000 students and create sessions from their interaction logs.
+This larger sample (up from 5K) provides more robust training signal.
+The chronological train/val/test split ensures no temporal leakage.
+
+
+DATASET 2: OULAD (Demographic Data for Fairness Analysis)
+-----------------------------------------------------------
+Location: archive/ (7 CSV files, primarily studentInfo.csv)
+Source: Open University (UK)
+Contains: gender, age_band, disability, IMD_band (socioeconomic status), region
+
+Why OULAD?
+  EdNet doesn't have demographic information, but we NEED demographics to
+  test whether our system is fair across different groups. OULAD is the only
+  large-scale educational dataset with rich demographic attributes.
+
+Synthetic linkage:
+  Since EdNet students (Korean) and OULAD students (British) are different
+  populations, we can't match them individually. Instead, we SYNTHETICALLY
+  assign demographics to EdNet students by sampling from OULAD's demographic
+  distribution. This preserves the statistical properties we need for
+  fairness testing.
+
+  We also inject small controlled perturbations per demographic group
+  (e.g., slightly higher response time variance for one age band) to
+  create a real statistical signal for the fairness mechanism to detect
+  and correct. This validates the MECHANISM, not organic correlations.
+
+
+DATASET 3: Synthetic Anomalies (Our Ground Truth Labels)
+---------------------------------------------------------
+Neither dataset has labeled cheating data. We CREATE our own ground truth
+by injecting 7 types of synthetic anomalies into 10% of sessions.
+
+Anomaly composition: each anomalous session always gets exactly 1 TIMING
+anomaly (from Types 1, 3, 4, 6, 7) plus optionally 1 SUPPLEMENTARY anomaly
+(from Types 2, 5) with 60% probability. This creates realistic multi-
+dimensional anomalies rather than single-feature perturbations.
+
+  1. RAPID RESPONSES: Compress response times by 1.5-3x on a contiguous
+     block (50-80%) of the session. NOT the entire session -- the first
+     portion is normal speed, creating a temporal transition.
+     (Simulates: student getting help partway through)
+
+  2. EXCESSIVE ANSWER CHANGES: Add 2-5 extra answer changes to 40-70%
+     of questions, spaced 2-8 seconds apart.
+     (Simulates: receiving external cues during the exam)
+
+  3. IRREGULAR TIMING: Create 2-4 burst clusters of 3-6 consecutive
+     fast answers after long pauses (20-60 seconds). Creates a
+     pause-burst-pause-burst rhythm.
+     (Simulates: alt-tabbing to look up answers)
+
+  4. UNIFORM RESPONSE PATTERN: Replace natural time variation with
+     near-constant per-question gaps (3-8 seconds + tiny jitter),
+     simulating a student copying pre-known answers at a steady
+     mechanical pace. Destroys the natural rhythm that the LSTM
+     expects, producing high reconstruction error.
+     (Simulates: reading answers off a cheat sheet)
+
+  5. RANDOM NAVIGATION: Shuffle 30-50% of row item_id/answer columns
+     while preserving timestamps - simulates revisiting.
+     (Simulates: following a shared answer key)
+
+  6. CORRELATED FEATURE SHIFTS: Compress time AND add answer changes
+     on alternating segments of 5-8 questions, creating a zigzag
+     temporal pattern: normal -> fast -> normal -> fast.
+     (Simulates: periodically checking an external source)
+
+  7. PARTIAL SESSION CHEATING: Student starts normally but begins
+     cheating at a transition point (30-55% through). After transition:
+     response times drop 1.5-3x, answer changes increase, burst ratio
+     spikes. This is the most realistic pattern AND gives sequential
+     models the biggest advantage -- aggregate features are diluted by
+     the normal first half, but the LSTM sees the clear transition.
+     (Simulates: mid-exam decision to cheat)
+
+Compression factors use realistic ranges (1.5-3x, not 5-10x) based on
+literature review of actual cheating behavioral shifts.
+
+Why 10% contamination? This matches standard benchmarks in the anomaly
+detection literature. Too high and the model might learn anomalies as
+"normal." Too low and evaluation becomes statistically noisy.
+
+
+================================================================================
+5. HOW WE PREPARE THE DATA (PREPROCESSING PIPELINE)
+================================================================================
+
+The preprocessing pipeline runs in this exact order:
+
+STEP 1: SESSION CREATION
+  Raw EdNet data is one continuous stream of interactions per student.
+  We define "sessions" by grouping consecutive questions with gaps < 30
+  minutes. Only sessions with 20-50 questions are kept (too short = not
+  enough signal; too long = probably multiple activities).
+
+STEP 2: DEMOGRAPHIC MERGING
+  OULAD demographics are stratified-sampled and assigned to EdNet students.
+  Group-level behavioral perturbations are applied.
+
+STEP 3: FEATURE EXTRACTION
+  10 behavioral features are computed per question per session.
+  Output shape: (num_sessions, max_questions=50, 10_features)
+
+STEP 4: Z-SCORE NORMALIZATION
+  Each feature is normalized to mean=0, std=1 using ONLY training set
+  statistics. This is critical:
+  - Without normalization, features on different scales (seconds vs counts)
+    would make the MSE loss meaningless
+  - Computing stats only on training data prevents "data leakage" (using
+    future information to process past data)
+
+STEP 5: SYNTHETIC ANOMALY INJECTION
+  10% of sessions are perturbed. Injected AFTER normalization stats are
+  computed so the stats represent only clean/normal behavior.
+
+STEP 6: CHRONOLOGICAL TRAIN/VAL/TEST SPLIT (70/15/15)
+  Per student, sessions are ordered by time: earliest 70% -> train,
+  next 15% -> validation, last 15% -> test.
+
+  Why chronological? Random splitting would let the model "see the future"
+  during training, which is cheating (ironic for a cheating detector).
+  In real deployment, you train on past exams and evaluate on future ones.
+
+
+================================================================================
+6. THE MODELS (WHAT THEY ARE AND WHY WE CHOSE THEM)
+================================================================================
+
+We implement 6 models total: our main LSTM Autoencoder + Transformer
+Autoencoder + 4 baselines for comparison.
+
+MODEL 1: LSTM AUTOENCODER (Our Main Model)
+  - Architecture: 2-layer LSTM encoder/decoder, 48 hidden units, 16 latent dims
+  - Trained on: normal sessions only (self-supervised)
+  - Anomaly signal: reconstruction error (MSE)
+  - Special power: captures TEMPORAL patterns in exam behavior
+  - Personalization: blended drift scoring (personal + population baselines)
+  - Gradient clipping (max_norm=1.0) prevents exploding gradients
+
+MODEL 2: TRANSFORMER AUTOENCODER (Alternative Sequence Model)
+  - Architecture: self-attention with learnable positional encodings
+  - d_model=48, 4 attention heads, 2 encoder/decoder layers, latent_dim=16
+  - Same forward interface as LSTM-AE for identical evaluation
+  - Tests whether attention mechanisms outperform sequential inductive bias
+  - Masking ensures padding doesn't affect attention weights
+
+MODEL 3: STANDARD AUTOENCODER (Ablation Baseline)
+  - Same idea as LSTM-AE but uses regular feedforward layers
+  - Treats the session as a FLAT vector, ignoring temporal order
+  - Purpose: directly measures how much value temporal modeling adds
+  - If LSTM-AE/Transformer-AE do better, it proves sequence modeling matters
+
+MODEL 4: ISOLATION FOREST (Strong Baseline)
+  - Tree-based method from scikit-learn
+  - Isolates anomalies by randomly partitioning data
+  - Works on flat feature vectors (no temporal modeling)
+  - State-of-the-art for unsupervised anomaly detection
+
+MODEL 5: ONE-CLASS SVM (Boundary Baseline)
+  - Learns a "boundary" around normal data in high-dimensional space
+  - Uses RBF kernel to map features into a space where normal data clusters
+  - Another strong traditional baseline
+
+MODEL 6: RULE-BASED HEURISTICS (Floor Baseline)
+  - Simple if-then rules: "if response_time < 5s, flag"
+  - Mimics what many universities actually do today
+  - Expected to perform WORST -- establishes the floor
+
+
+================================================================================
+7. HOW WE DETECT ANOMALIES (DRIFT SCORING)
+================================================================================
+
+After training, the anomaly detection flow for a new exam session works as:
+
+  1. Student takes an exam -> clickstream data is recorded
+  2. Extract 10 question-level behavioral features from the session
+  3. Normalize features using stored training statistics
+  4. Pass through the LSTM/Transformer Autoencoder
+  5. Compute masked reconstruction error (MSE, excluding padded positions)
+  6. Compute population z-score using robust median/MAD normalization
+  7. Compute personal z-score from student's own training errors
+  8. Blend: score = lambda_s * personal + (1-lambda_s) * population
+     where lambda_s = min(1, n_sessions / 5)
+  9. Compare against threshold (tau) -> flag or not flag
+
+The THRESHOLD (tau) is selected on the validation set to maximize a
+weighted F-beta score (beta capped at 1.5 to avoid extreme recall bias).
+It represents the boundary between "normal variation" and
+"suspicious deviation."
+
+
+================================================================================
+8. FAIRNESS: MAKING SURE THE SYSTEM IS NOT BIASED
+================================================================================
+
+Why Fairness Matters Here:
+  Even with personalized baselines, certain demographic groups might get
+  flagged at higher rates than others. This can happen because:
+  - Students from certain socioeconomic backgrounds might have more variable
+    internet connections, causing more erratic timing patterns
+  - Cultural differences might lead to different navigation styles
+  - Students with disabilities might interact with exams differently
+
+  If we don't account for this, the system reproduces existing inequalities.
+
+Our Approach: Threshold Calibration
+  Instead of one global threshold for everyone, we compute a GROUP-SPECIFIC
+  threshold for each demographic group:
+
+    tau_g = tau + alpha * (mean_drift_of_group_g - mean_drift_of_everyone)
+
+  Where alpha is a "fairness sensitivity" parameter (0 to 1):
+    - alpha = 0: no calibration (same threshold for everyone)
+    - alpha = 1: full calibration (completely equalize mean drift across groups)
+
+  In practice, we tune alpha to balance detection performance with fairness.
+
+Two Fairness Metrics We Target:
+
+  1. DEMOGRAPHIC PARITY RATIO (DPR) >= 0.80
+     "All groups should be flagged at roughly the same rate"
+     DPR = (lowest group flag rate) / (highest group flag rate)
+     Perfect = 1.0; our target >= 0.80
+
+  2. EQUALIZED ODDS DIFFERENCE (EOD) <= 0.10
+     "All groups should have roughly the same true positive and false positive rates"
+     Ensures the system isn't just equally inaccurate for everyone, but
+     equally ACCURATE for everyone.
+
+We evaluate across 4 demographic dimensions: gender, age band, IMD band
+(socioeconomic), and disability status.
+
+
+================================================================================
+9. EXPLAINABILITY: TELLING INSTRUCTORS WHY A STUDENT WAS FLAGGED
+================================================================================
+
+A flag without an explanation is useless to an instructor. "Student X is
+suspicious" tells you nothing. "Student X responded 4x faster than their
+average and changed answers 6x more than usual" tells you everything.
+
+We use SHAP (SHapley Additive exPlanations):
+
+What is SHAP?
+  SHAP comes from game theory (Shapley values). It answers: "How much did
+  each feature CONTRIBUTE to this particular prediction?"
+
+  For each flagged session, SHAP decomposes the reconstruction error into
+  per-feature contributions:
+
+    Total error = baseline + contribution_of_feature_1 + contribution_of_feature_2 + ...
+
+  So you can say: "Response time contributed +0.4 to the anomaly score,
+  answer changes contributed +0.3, navigation contributed +0.1"
+
+Two Levels of Explanation:
+  1. QUESTION-LEVEL: Which specific questions had the most unusual behavior?
+     "Questions 12, 23, and 31 were the most anomalous"
+
+  2. FEATURE-LEVEL: Which behavioral dimensions drove the flag overall?
+     "Response time was the dominant factor (60% of anomaly score)"
+
+We use KernelSHAP with 200 background samples from training data, which
+is a model-agnostic approximation method suitable for our LSTM model.
+
+
+================================================================================
+10. HOW WE EVALUATE EVERYTHING
+================================================================================
+
+ANOMALY DETECTION METRICS:
+
+  ROC-AUC (Area Under ROC Curve)
+    - Measures the model's ability to RANK anomalies higher than normal sessions
+    - Threshold-independent (tests all possible thresholds)
+    - 0.5 = random guessing; 1.0 = perfect separation
+    - Our main metric for overall detection quality
+
+  PR-AUC (Area Under Precision-Recall Curve)
+    - More informative than ROC-AUC when classes are imbalanced (10% anomalies)
+    - Focuses on: "Of the sessions you flagged, how many were actually anomalous?"
+    - Important because false positives have real consequences (wrongly accusing
+      an honest student)
+
+  F1-Score
+    - Harmonic mean of Precision and Recall at the optimal threshold
+    - Single number summary of detection performance
+    - Balances "catching cheaters" (recall) with "not flagging innocents" (precision)
+
+  Precision@10
+    - Of the top 10 highest-scored sessions, how many are truly anomalous?
+    - Most operationally relevant: instructors will only review a handful of
+      the most suspicious cases
+
+RESULTS (after Stage 2 fixes: question-level features, per-model
+thresholds, 6 anomaly types, 1.5-3x compression, blended drift scoring):
+
+  Model               ROC-AUC   PR-AUC   F1      Precision  Recall
+  -------------------------------------------------------------------
+  Transformer-AE       0.865     0.679   0.620    0.528     0.751
+  LSTM-AE (Ours)       0.859     0.626   0.614    0.513     0.766
+  Isolation Forest     0.843     0.610   0.582    0.479     0.742
+  One-Class SVM        0.781     0.605   0.590    0.577     0.603
+  Std. Autoencoder     0.797     0.575   0.513    0.398     0.722
+  Rule-Based           0.560     0.230   0.329    0.264     0.435
+
+  Key observations:
+  - LSTM-AE now outperforms all traditional baselines (IF, OC-SVM)
+  - Transformer-AE slightly outperforms LSTM-AE on ROC-AUC and PR-AUC
+  - Rule-Based is worst, validating the project premise
+  - Precision is still modest (~0.51), which is expected at 10% contamination
+    with realistic 1.5-3x compression factors
+  - Blended drift scoring provides personalized baselines for students
+    with sufficient history
+
+
+================================================================================
+11. KEY CONCEPTS AND TERMINOLOGY GLOSSARY
+================================================================================
+
+AUTOENCODER: Neural network that learns to compress and reconstruct data.
+  Trained on normal data only; fails to reconstruct anomalies.
+
+LSTM (Long Short-Term Memory): Type of recurrent neural network that can
+  learn long-range dependencies in sequential data. Has "gates" that
+  control what information to remember and forget.
+
+RECONSTRUCTION ERROR (MSE): The difference between what the autoencoder
+  receives as input and what it produces as output. High error = the input
+  looks different from what the model learned as "normal."
+
+DRIFT SCORE: Z-score normalized reconstruction error. Measures how many
+  standard deviations a session's error is from the expected mean.
+
+Z-SCORE NORMALIZATION: (value - mean) / standard_deviation. Converts any
+  measurement to "how many standard deviations from average."
+
+CLICKSTREAM: The sequence of clicks, timestamps, and interactions a user
+  generates while using a digital system.
+
+SELF-SUPERVISED LEARNING: Training without human-provided labels. The model
+  creates its own training signal (here: reconstruct the input).
+
+FINE-TUNING: Taking a pre-trained model and continuing training on new,
+  specific data. Here: taking the population model and adapting it to
+  individual students.
+
+TRANSFER LEARNING: Using knowledge from one task/domain to help with
+  another. Here: using the population model as a starting point for
+  individual student models.
+
+SHAP (SHapley Additive exPlanations): Method from game theory that
+  assigns each feature a contribution score for a specific prediction.
+
+DEMOGRAPHIC PARITY: Fairness criterion requiring that all demographic
+  groups have equal probability of being flagged.
+
+EQUALIZED ODDS: Fairness criterion requiring that all demographic groups
+  have equal true positive and false positive rates.
+
+CONTAMINATION RATE: The proportion of anomalous samples in the dataset
+  (10% in our case).
+
+EPOCH: One complete pass through the entire training dataset.
+
+EARLY STOPPING: Halting training when validation performance stops
+  improving, to prevent overfitting.
+
+OVERFITTING: When a model memorizes the training data instead of learning
+  general patterns, performing well on training data but poorly on new data.
+
+LATENT SPACE: The compressed internal representation learned by the
+  autoencoder. A lower-dimensional encoding of the input data.
+
+PACKED SEQUENCES (PyTorch): Technique to handle variable-length sequences
+  efficiently, ensuring padding doesn't affect the model's learning.
+
+
+================================================================================
+END OF EXPLANATION
+================================================================================

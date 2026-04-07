@@ -1,0 +1,36 @@
+# Datasets (too large for git)
+EdNet-KT2/
+archive/
+
+# Processed data and model artifacts
+data/processed/
+results/models/
+results/plots/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
