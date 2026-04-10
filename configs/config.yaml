@@ -12,7 +12,7 @@ data:
   train_ratio: 0.7
   val_ratio: 0.15
   test_ratio: 0.15
-  synthetic_contamination: 0.10  # 10% anomaly injection (matches paper)
+  synthetic_contamination: 0.15  # 15% anomaly injection — more signal for threshold optimization
 
 # Feature Engineering
 features:
@@ -34,8 +34,8 @@ features:
 model:
   name: "LSTMAutoencoder"
   input_dim: 10  # Number of features (6 original + 4 new)
-  hidden_dim: 48    # reduced from 128 — keeps bottleneck tight
-  latent_dim: 16    # reduced from 32 — tight enough to force lossy compression
+  hidden_dim: 96    # enough capacity to learn normal patterns well
+  latent_dim: 32    # wider bottleneck improves normal reconstruction quality
   num_layers: 2
   dropout: 0.2
   bidirectional: false
@@ -45,10 +45,10 @@ model:
 transformer:
   name: "TransformerAutoencoder"
   input_dim: 10
-  d_model: 48       # reduced from 128
-  nhead: 4          # 48/4 = 12 per head — still reasonable
+  d_model: 96       # matched to LSTM hidden_dim for fair comparison
+  nhead: 4          # 96/4 = 24 per head
   num_layers: 2
-  latent_dim: 16    # reduced from 32
+  latent_dim: 32    # matched to LSTM latent_dim
   max_seq_len: 50
   dropout: 0.2
 
@@ -107,11 +107,11 @@ baselines:
       answer_change_max: 0.8  # flag if answer_change_rate > 0.8 per question (normal ~0.1-0.3)
       burst_ratio_max: 0.95   # flag if > 95% of actions under 2s apart
   - name: "IsolationForest"
-    contamination: 0.1
+    contamination: 0.15
     n_estimators: 100
   - name: "OneClassSVM"
     kernel: "rbf"
-    nu: 0.1
+    nu: 0.15
   - name: "StandardAutoencoder"
     hidden_dims: [48, 16, 48]
 

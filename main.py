@@ -19,7 +19,7 @@ from src.data_loader import (EdNetDataLoader, SessionCreator, OULADLoader,
 from src.feature_extraction import BehavioralFeatureExtractor, save_features, load_features
 from src.preprocessing import SyntheticAnomalyGenerator, DataPreprocessor, save_processed_data, load_processed_data
 from src.models import LSTMAutoencoder, TransformerAutoencoder, DemographicDiscriminator, compute_reconstruction_error
-from src.train import Trainer, compute_drift_scores, compute_blended_drift_scores, train_baseline_models
+from src.train import Trainer, compute_drift_scores, compute_blended_drift_scores, compute_combined_scores, train_baseline_models
 from src.evaluate import evaluate_model, select_optimal_threshold, compare_models, compute_classification_metrics, compute_precision_at_k
 from src.fairness import FairnessAnalyzer, compare_fairness_before_after
 from src.explainability import SHAPExplainer, SequentialSHAPExplainer, generate_explanation_report
@@ -533,14 +533,23 @@ def _load_trained_models(config, processed_data, device):
 def _eval_sequence_model(name, model, train_errors, X_val_seq, X_test_seq,
                          L_val, L_test, y_val, y_test, device,
                          all_results, all_scores, all_predictions,
-                         sid_train_clean=None, sid_val=None, sid_test=None):
-    """Evaluate a sequence autoencoder (LSTM or Transformer) with blended drift scoring."""
+                         sid_train_clean=None, sid_val=None, sid_test=None,
+                         X_train_seq=None, L_train=None):
+    """Evaluate a sequence autoencoder using combined reconstruction + Mahalanobis scoring."""
     print(f"\nEvaluating {name}...")
     X_val_tensor = torch.FloatTensor(X_val_seq).to(device)
     L_val_tensor = torch.LongTensor(L_val).to(device)
 
-    # Use blended (personalized) scoring if student IDs are available
-    if sid_train_clean is not None and sid_val is not None:
+    # Use combined (reconstruction + Mahalanobis) scoring when training data available
+    if sid_train_clean is not None and sid_val is not None and X_train_seq is not None:
+        X_train_tensor = torch.FloatTensor(X_train_seq).to(device)
+        L_train_tensor = torch.LongTensor(L_train).to(device)
+        _, val_scores = compute_combined_scores(
+            model, X_val_tensor, device, train_errors,
+            sid_train_clean, sid_val, X_train_tensor,
+            lengths=L_val_tensor, train_lengths=L_train_tensor
+        )
+    elif sid_train_clean is not None and sid_val is not None:
         _, val_scores = compute_blended_drift_scores(
             model, X_val_tensor, device, train_errors,
             sid_train_clean, sid_val, L_val_tensor
@@ -551,11 +560,19 @@ def _eval_sequence_model(name, model, train_errors, X_val_seq, X_test_seq,
     threshold = select_optimal_threshold(y_val, val_scores, method='f1_weighted')
     print(f"  {name} threshold: {threshold:.4f}")
 
-    # Evaluate on test set with blended scoring
+    # Evaluate on test set with same scoring
     X_test_tensor = torch.FloatTensor(X_test_seq).to(device)
     L_test_tensor = torch.LongTensor(L_test).to(device)
 
-    if sid_train_clean is not None and sid_test is not None:
+    if sid_train_clean is not None and sid_test is not None and X_train_seq is not None:
+        X_train_tensor = torch.FloatTensor(X_train_seq).to(device)
+        L_train_tensor = torch.LongTensor(L_train).to(device)
+        _, test_scores = compute_combined_scores(
+            model, X_test_tensor, device, train_errors,
+            sid_train_clean, sid_test, X_train_tensor,
+            lengths=L_test_tensor, train_lengths=L_train_tensor
+        )
+    elif sid_train_clean is not None and sid_test is not None:
         _, test_scores = compute_blended_drift_scores(
             model, X_test_tensor, device, train_errors,
             sid_train_clean, sid_test, L_test_tensor
@@ -608,13 +625,22 @@ def evaluate_models(config, processed_data):
     all_scores = {}
     all_predictions = {}
 
+    X_train_seq = processed_data['X_train_seq']
+    L_train = processed_data['L_train']
+    y_train = processed_data['y_train']
+    # Use only clean training sessions for Mahalanobis reference distribution
+    normal_mask = (y_train == 0)
+    X_train_seq_clean = X_train_seq[normal_mask]
+    L_train_clean = L_train[normal_mask]
+
     # ---- 1. LSTM Autoencoder ----
     lstm_threshold = _eval_sequence_model(
         'LSTM-AE (Ours)', processed_data['lstm_model'],
         processed_data['lstm_train_errors'],
         X_val_seq, X_test_seq, L_val, L_test, y_val, y_test, device,
         all_results, all_scores, all_predictions,
-        sid_train_clean=sid_train_clean, sid_val=sid_val, sid_test=sid_test
+        sid_train_clean=sid_train_clean, sid_val=sid_val, sid_test=sid_test,
+        X_train_seq=X_train_seq_clean, L_train=L_train_clean
     )
 
     # ---- 2. Transformer Autoencoder ----
@@ -623,7 +649,8 @@ def evaluate_models(config, processed_data):
         processed_data['tf_train_errors'],
         X_val_seq, X_test_seq, L_val, L_test, y_val, y_test, device,
         all_results, all_scores, all_predictions,
-        sid_train_clean=sid_train_clean, sid_val=sid_val, sid_test=sid_test
+        sid_train_clean=sid_train_clean, sid_val=sid_val, sid_test=sid_test,
+        X_train_seq=X_train_seq_clean, L_train=L_train_clean
     )
 
     # ---- 3. Baseline models (each gets its OWN threshold) ----

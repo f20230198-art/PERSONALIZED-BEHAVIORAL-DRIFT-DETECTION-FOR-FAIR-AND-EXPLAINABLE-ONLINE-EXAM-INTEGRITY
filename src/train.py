@@ -196,6 +196,46 @@ class Trainer:
         print(f"Loaded checkpoint from {filepath}")
 
 
+def compute_mahalanobis_scores(latents: np.ndarray,
+                               train_latents: np.ndarray) -> np.ndarray:
+    """Compute Mahalanobis distance of each latent vector from the training distribution.
+
+    Normal sessions cluster tightly in latent space; anomalous sessions produce
+    latent vectors that land far from the training cluster.  Combined with
+    reconstruction error, this gives a second independent signal.
+
+    Uses a regularized covariance estimate to handle near-singular matrices.
+    """
+    mu = np.mean(train_latents, axis=0)
+    cov = np.cov(train_latents, rowvar=False)
+
+    # Regularize: add small diagonal to avoid singular matrix
+    cov += np.eye(cov.shape[0]) * 1e-4
+
+    try:
+        cov_inv = np.linalg.inv(cov)
+    except np.linalg.LinAlgError:
+        # Fallback: use diagonal only
+        cov_inv = np.diag(1.0 / (np.diag(cov) + 1e-4))
+
+    diff = latents - mu  # (N, latent_dim)
+    # Mahalanobis: sqrt(diff @ cov_inv @ diff.T) per sample
+    scores = np.sqrt(np.einsum('ni,ij,nj->n', diff, cov_inv, diff))
+    return scores
+
+
+def _extract_latents(model: nn.Module, X: torch.Tensor, device: torch.device,
+                     lengths: torch.Tensor = None) -> np.ndarray:
+    """Extract latent representations for all samples."""
+    model.eval()
+    with torch.no_grad():
+        X = X.to(device)
+        if lengths is not None:
+            lengths = lengths.to(device)
+        _, latents = model(X, lengths) if lengths is not None else model(X)
+    return latents.cpu().numpy()
+
+
 def compute_drift_scores(model: nn.Module, X: torch.Tensor, device: torch.device,
                         train_errors: np.ndarray = None,
                         lengths: torch.Tensor = None) -> Tuple[np.ndarray, np.ndarray]:
@@ -307,6 +347,64 @@ def compute_blended_drift_scores(model: nn.Module, X: torch.Tensor, device: torc
             blended_scores[i] = pop_score
 
     return errors, blended_scores
+
+
+def compute_combined_scores(model: nn.Module, X: torch.Tensor, device: torch.device,
+                             train_errors: np.ndarray,
+                             train_student_ids: np.ndarray,
+                             eval_student_ids: np.ndarray,
+                             train_X: torch.Tensor,
+                             lengths: torch.Tensor = None,
+                             train_lengths: torch.Tensor = None,
+                             recon_weight: float = 0.6,
+                             mahal_weight: float = 0.4) -> Tuple[np.ndarray, np.ndarray]:
+    """Combine blended reconstruction drift scores with Mahalanobis latent-space scores.
+
+    Final score = recon_weight * z(recon_error) + mahal_weight * z(mahalanobis)
+
+    Both components are z-scored to the same scale before combining.
+    This gives two independent signals:
+      - Reconstruction error: how poorly the model rebuilds the sequence
+      - Mahalanobis distance: how far the latent vector is from normal clusters
+
+    Args:
+        model: Trained autoencoder
+        X: Evaluation data (batch, seq_len, features)
+        device: PyTorch device
+        train_errors: Training reconstruction errors
+        train_student_ids: Student IDs for training sessions
+        eval_student_ids: Student IDs for evaluation sessions
+        train_X: Training data tensor (for extracting train latents)
+        lengths: Eval sequence lengths
+        train_lengths: Train sequence lengths
+        recon_weight: Weight for reconstruction error component (default 0.6)
+        mahal_weight: Weight for Mahalanobis component (default 0.4)
+
+    Returns:
+        raw_errors: Raw reconstruction errors
+        combined_scores: Weighted combination of both signals
+    """
+    # Component 1: blended reconstruction drift scores
+    raw_errors, blended_scores = compute_blended_drift_scores(
+        model, X, device, train_errors, train_student_ids, eval_student_ids, lengths
+    )
+
+    # Component 2: Mahalanobis distance in latent space
+    train_latents = _extract_latents(model, train_X, device, train_lengths)
+    eval_latents = _extract_latents(model, X, device, lengths)
+    mahal_scores = compute_mahalanobis_scores(eval_latents, train_latents)
+
+    # Z-score both to the same scale
+    def _zscore(arr):
+        median = np.median(arr)
+        mad = np.median(np.abs(arr - median)) * 1.4826
+        return (arr - median) / (mad if mad > 0 else 1.0)
+
+    recon_z = _zscore(blended_scores)
+    mahal_z = _zscore(mahal_scores)
+
+    combined = recon_weight * recon_z + mahal_weight * mahal_z
+    return raw_errors, combined
 
 
 def train_baseline_models(X_train: np.ndarray, config: Dict) -> Dict:

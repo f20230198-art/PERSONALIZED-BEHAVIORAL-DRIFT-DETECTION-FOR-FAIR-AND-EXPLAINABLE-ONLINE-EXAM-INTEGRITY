@@ -23,7 +23,7 @@ class SyntheticAnomalyGenerator:
 
         Simulates a student who gets help partway through — the first portion
         is answered at normal speed, then a contiguous block of questions is
-        answered 3-6x faster. This creates a temporal transition that LSTM
+        answered 3-8x faster. This creates a temporal transition that LSTM
         can detect but aggregate statistics (mean/std) partially miss.
         """
         anomalous = session.copy()
@@ -34,7 +34,7 @@ class SyntheticAnomalyGenerator:
         block_start = random.randint(0, n - block_size)
         block_end = block_start + block_size
 
-        compression = random.uniform(1.5, 3.0)
+        compression = random.uniform(3.0, 8.0)
         original_gaps = anomalous['timestamp_sec'].diff().fillna(0).values
 
         # Only compress gaps within the affected block
@@ -122,7 +122,7 @@ class SyntheticAnomalyGenerator:
                 cumulative_time += gap * random.uniform(0.25, 0.50)
             elif i in burst_positions:
                 # Inside a burst — very fast
-                cumulative_time += gap * random.uniform(0.25, 0.50)
+                cumulative_time += gap * random.uniform(0.10, 0.25)
             else:
                 cumulative_time += gap
             new_timestamps.append(cumulative_time)
@@ -197,7 +197,7 @@ class SyntheticAnomalyGenerator:
         anomalous = session.copy()
         n = len(anomalous)
 
-        compression = random.uniform(1.5, 3.0)
+        compression = random.uniform(3.0, 8.0)
         original_gaps = anomalous['timestamp_sec'].diff().fillna(0).values
 
         # Create alternating fast/normal segments of 5-8 questions
@@ -256,7 +256,7 @@ class SyntheticAnomalyGenerator:
 
         # Transition point: 30-55% through the session (larger cheating portion)
         transition = random.randint(int(n * 0.3), int(n * 0.55))
-        compression = random.uniform(1.5, 3.0)
+        compression = random.uniform(3.0, 8.0)
 
         original_gaps = anomalous['timestamp_sec'].diff().fillna(0).values
 

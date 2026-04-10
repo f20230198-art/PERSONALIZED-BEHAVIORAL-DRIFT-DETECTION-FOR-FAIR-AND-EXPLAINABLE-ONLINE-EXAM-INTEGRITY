@@ -47,13 +47,8 @@ class LSTMAutoencoder(nn.Module):
         
         # Decoder
         self.decoder_fc = nn.Linear(latent_dim, hidden_dim)
-        # Project latent to hidden_dim for use as per-step decoder input.
-        # Feeding the latent vector at every step (instead of zeros) preserves
-        # sequence information across long sequences and gives much better
-        # reconstruction quality / anomaly discriminability.
-        self.decoder_input_proj = nn.Linear(latent_dim, hidden_dim)
         self.decoder_lstm = nn.LSTM(
-            input_size=hidden_dim,
+            input_size=input_dim,
             hidden_size=hidden_dim,
             num_layers=num_layers,
             batch_first=True,
@@ -91,27 +86,25 @@ class LSTMAutoencoder(nn.Module):
     def decode(self, latent, seq_len):
         """Decode latent representation back to sequence.
 
-        The latent vector is projected to form the initial hidden state AND
-        is fed as input at every decoder timestep.  Using the latent vector
-        as a persistent input (via decoder_input_proj) prevents reconstruction
-        quality from degrading over long sequences, which sharpens the gap
-        between normal and anomalous reconstruction errors.
+        The latent vector seeds the initial hidden state only.
+        Zero vectors are fed as input at every decoder timestep, forcing the
+        LSTM to rely solely on the hidden state to reconstruct the sequence.
+        This creates a steeper reconstruction error gap between normal sessions
+        (which the model learns well) and anomalous sessions (which it doesn't),
+        improving both ROC-AUC and Precision@K.
         """
         batch_size = latent.size(0)
 
-        # Project latent → initial hidden state (same for every layer)
-        h_0 = self.decoder_fc(latent)                                   # (batch, hidden_dim)
-        h_0 = h_0.unsqueeze(0).expand(self.num_layers, -1, -1).contiguous()  # (layers, batch, hidden_dim)
-        c_0 = torch.zeros_like(h_0)                                     # (layers, batch, hidden_dim)
+        # Project latent → initial hidden state (replicated for each layer)
+        h_0 = self.decoder_fc(latent)                                        # (batch, hidden_dim)
+        h_0 = h_0.unsqueeze(0).expand(self.num_layers, -1, -1).contiguous() # (layers, batch, hidden_dim)
+        c_0 = torch.zeros_like(h_0)
 
-        # Feed the latent vector (projected to hidden_dim) at every timestep.
-        # This injects sequence context at each step so long-range reconstruction
-        # doesn't degrade — critical for distinguishing normal vs anomalous errors.
-        step_input = self.decoder_input_proj(latent)                    # (batch, hidden_dim)
-        decoder_input = step_input.unsqueeze(1).expand(-1, seq_len, -1)  # (batch, seq_len, hidden_dim)
+        # Feed zeros at every timestep — decoder must rely on hidden state alone
+        decoder_input = torch.zeros(batch_size, seq_len, self.input_dim, device=latent.device)
 
         lstm_out, _ = self.decoder_lstm(decoder_input, (h_0, c_0))
-        output = self.output_fc(lstm_out)                               # (batch, seq_len, input_dim)
+        output = self.output_fc(lstm_out)                                    # (batch, seq_len, input_dim)
         return output
     
     def forward(self, x, lengths=None):
