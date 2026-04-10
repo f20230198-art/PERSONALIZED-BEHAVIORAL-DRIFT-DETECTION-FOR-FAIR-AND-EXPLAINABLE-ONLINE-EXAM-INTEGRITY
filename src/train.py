@@ -356,8 +356,8 @@ def compute_combined_scores(model: nn.Module, X: torch.Tensor, device: torch.dev
                              train_X: torch.Tensor,
                              lengths: torch.Tensor = None,
                              train_lengths: torch.Tensor = None,
-                             recon_weight: float = 0.6,
-                             mahal_weight: float = 0.4) -> Tuple[np.ndarray, np.ndarray]:
+                             recon_weight: float = 0.4,
+                             mahal_weight: float = 0.6) -> Tuple[np.ndarray, np.ndarray]:
     """Combine blended reconstruction drift scores with Mahalanobis latent-space scores.
 
     Final score = recon_weight * z(recon_error) + mahal_weight * z(mahalanobis)
@@ -377,8 +377,8 @@ def compute_combined_scores(model: nn.Module, X: torch.Tensor, device: torch.dev
         train_X: Training data tensor (for extracting train latents)
         lengths: Eval sequence lengths
         train_lengths: Train sequence lengths
-        recon_weight: Weight for reconstruction error component (default 0.6)
-        mahal_weight: Weight for Mahalanobis component (default 0.4)
+        recon_weight: Weight for reconstruction error component (default 0.4)
+        mahal_weight: Weight for Mahalanobis component (default 0.6)
 
     Returns:
         raw_errors: Raw reconstruction errors

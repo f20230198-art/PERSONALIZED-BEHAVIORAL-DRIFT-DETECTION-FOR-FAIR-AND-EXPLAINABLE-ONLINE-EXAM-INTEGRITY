@@ -55,11 +55,11 @@ transformer:
 # Training
 training:
   batch_size: 32
-  epochs: 200  # Up from 100; early stopping + LR scheduler will handle convergence
+  epochs: 300  # More epochs for larger model to converge
   learning_rate: 0.001
   optimizer: "Adam"
   loss: "MSE"
-  early_stopping_patience: 20  # increased to give bigger model time to converge
+  early_stopping_patience: 30  # more patience for larger model
   weight_decay: 0.0001
   gradient_clip: 1.0
   device: "cuda"

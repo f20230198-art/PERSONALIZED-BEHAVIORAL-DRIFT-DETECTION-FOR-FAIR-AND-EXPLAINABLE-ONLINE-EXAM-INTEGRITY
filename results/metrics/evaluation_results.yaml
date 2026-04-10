@@ -33,26 +33,26 @@ IsolationForest:
   true_negatives: 2914
   true_positives: 374
 LSTM-AE (Ours):
-  accuracy: 0.8352331606217617
-  f1: 0.5377906976744186
-  false_negatives: 170
-  false_positives: 466
+  accuracy: 0.827979274611399
+  f1: 0.5263908701854494
+  false_negatives: 171
+  false_positives: 493
   fpr: !!python/object/apply:numpy._core.multiarray.scalar
   - *id001
   - !!binary |
-    ngChJV33wT8=
-  pr_auc: 0.4834792061397903
-  precision: 0.44258373205741625
+    TFsUwdkBwz8=
+  pr_auc: 0.4853425832226396
+  precision: 0.4280742459396752
   precision_at_10: 0.6
-  precision_at_50: 0.5
-  recall: 0.6851851851851852
-  roc_auc: 0.8405644801427934
+  precision_at_50: 0.52
+  recall: 0.6833333333333333
+  roc_auc: 0.8452236724676484
   tpr: !!python/object/apply:numpy._core.multiarray.scalar
   - *id001
   - !!binary |
-    0V5Cewnt5T8=
-  true_negatives: 2854
-  true_positives: 370
+    3t3d3d3d5T8=
+  true_negatives: 2827
+  true_positives: 369
 OneClassSVM:
   accuracy: 0.8740932642487047
   f1: 0.5660714285714286
@@ -96,44 +96,44 @@ RuleBased:
   true_negatives: 2303
   true_positives: 233
 StandardAutoencoder:
-  accuracy: 0.8202072538860103
-  f1: 0.5207182320441989
-  false_negatives: 163
-  false_positives: 531
+  accuracy: 0.8349740932642487
+  f1: 0.5042801556420233
+  false_negatives: 216
+  false_positives: 421
   fpr: !!python/object/apply:numpy._core.multiarray.scalar
   - *id001
   - !!binary |
-    Xfcx8ed4xD8=
-  pr_auc: 0.5986814668070556
-  precision: 0.41519823788546256
+    fGmLIjg7wD8=
+  pr_auc: 0.5728139249813362
+  precision: 0.4348993288590604
   precision_at_10: 1.0
   precision_at_50: 0.96
-  recall: 0.6981481481481482
-  roc_auc: 0.8349849397590362
+  recall: 0.6
+  roc_auc: 0.8092486613119143
   tpr: !!python/object/apply:numpy._core.multiarray.scalar
   - *id001
   - !!binary |
-    dOUByTpX5j8=
-  true_negatives: 2789
-  true_positives: 377
+    MzMzMzMz4z8=
+  true_negatives: 2899
+  true_positives: 324
 Transformer-AE:
-  accuracy: 0.827461139896373
-  f1: 0.5201729106628242
-  false_negatives: 179
-  false_positives: 487
+  accuracy: 0.8305699481865285
+  f1: 0.5502063273727648
+  false_negatives: 140
+  false_positives: 514
   fpr: !!python/object/apply:numpy._core.multiarray.scalar
   - *id001
   - !!binary |
-    0PGInqHGwj8=
-  pr_auc: 0.486261640130232
-  precision: 0.4257075471698113
+    fkz8OR7Rwz8=
+  pr_auc: 0.5276908057621866
+  precision: 0.437636761487965
   precision_at_10: 0.4
-  precision_at_50: 0.54
-  recall: 0.6685185185185185
-  roc_auc: 0.8341917670682732
+  precision_at_50: 0.56
+  recall: 0.7407407407407407
+  roc_auc: 0.8702532351628737
   tpr: !!python/object/apply:numpy._core.multiarray.scalar
   - *id001
   - !!binary |
-    SNa58oBk5T8=
-  true_negatives: 2833
-  true_positives: 361
+    QnsJ7SW05z8=
+  true_negatives: 2806
+  true_positives: 400
