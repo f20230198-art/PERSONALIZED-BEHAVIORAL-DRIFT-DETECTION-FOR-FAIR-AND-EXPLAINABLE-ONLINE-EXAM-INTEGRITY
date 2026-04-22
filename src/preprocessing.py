@@ -406,9 +406,15 @@ class DataPreprocessor:
         val_dataset = TensorDataset(*tensors_val)
         test_dataset = TensorDataset(*tensors_test)
 
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+        # num_workers=0 on Windows (fork semantics cause overhead); pin_memory
+        # speeds H2D transfers when using CUDA. persistent_workers only helps
+        # when num_workers > 0.
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
+                                  pin_memory=True)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,
+                                pin_memory=True)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False,
+                                 pin_memory=True)
 
         return train_loader, val_loader, test_loader
 

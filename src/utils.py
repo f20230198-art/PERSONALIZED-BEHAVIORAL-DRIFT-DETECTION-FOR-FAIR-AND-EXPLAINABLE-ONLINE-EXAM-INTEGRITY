@@ -25,8 +25,11 @@ def set_seed(seed: int = 42):
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
+        # Trade strict reproducibility for ~2-3x GPU throughput.
+        # benchmark=True lets cuDNN pick the fastest kernel for fixed shapes;
+        # deterministic=False allows non-deterministic but faster algorithms.
+        torch.backends.cudnn.deterministic = False
+        torch.backends.cudnn.benchmark = True
 
 
 def get_device(device_str: str = "cuda") -> torch.device:

@@ -90,7 +90,10 @@ class Trainer:
             demo_labels = batch[2].to(self.device) if len(batch) > 2 else None
 
             reconstruction, latent = self.model(X, lengths)
-            recon_loss = self._masked_mse(reconstruction, X, lengths)
+            if getattr(self.model, 'is_vae', False) and hasattr(self.model, 'vae_loss'):
+                recon_loss = self.model.vae_loss(reconstruction, X, lengths)
+            else:
+                recon_loss = self._masked_mse(reconstruction, X, lengths)
 
             # Adversarial fairness loss
             adv_loss = torch.tensor(0.0, device=self.device)
@@ -120,7 +123,10 @@ class Trainer:
                 lengths = batch[1].to(self.device) if len(batch) > 1 else None
 
                 reconstruction, _ = self.model(X, lengths)
-                loss = self._masked_mse(reconstruction, X, lengths)
+                if getattr(self.model, 'is_vae', False) and hasattr(self.model, 'vae_loss'):
+                    loss = self.model.vae_loss(reconstruction, X, lengths)
+                else:
+                    loss = self._masked_mse(reconstruction, X, lengths)
                 total_loss += loss.item()
 
         return total_loss / len(val_loader)
@@ -225,15 +231,24 @@ def compute_mahalanobis_scores(latents: np.ndarray,
 
 
 def _extract_latents(model: nn.Module, X: torch.Tensor, device: torch.device,
-                     lengths: torch.Tensor = None) -> np.ndarray:
-    """Extract latent representations for all samples."""
+                     lengths: torch.Tensor = None, batch_size: int = 256) -> np.ndarray:
+    """Extract latent representations for all samples (batched to avoid OOM)."""
     model.eval()
+    out = []
+    n = X.shape[0]
     with torch.no_grad():
-        X = X.to(device)
-        if lengths is not None:
-            lengths = lengths.to(device)
-        _, latents = model(X, lengths) if lengths is not None else model(X)
-    return latents.cpu().numpy()
+        for i in range(0, n, batch_size):
+            xb = X[i:i+batch_size].to(device)
+            if lengths is not None:
+                lb = lengths[i:i+batch_size].to(device)
+                _, latents = model(xb, lb)
+            else:
+                _, latents = model(xb)
+            out.append(latents.cpu().numpy())
+            del xb, latents
+    if device.type == 'cuda':
+        torch.cuda.empty_cache()
+    return np.concatenate(out, axis=0)
 
 
 def compute_drift_scores(model: nn.Module, X: torch.Tensor, device: torch.device,
@@ -347,6 +362,70 @@ def compute_blended_drift_scores(model: nn.Module, X: torch.Tensor, device: torc
             blended_scores[i] = pop_score
 
     return errors, blended_scores
+
+
+def personalize_scores(train_scores: np.ndarray,
+                       eval_scores: np.ndarray,
+                       train_student_ids: np.ndarray,
+                       eval_student_ids: np.ndarray,
+                       n_min: int = 5) -> np.ndarray:
+    """
+    Apply personalized (per-student) blended scoring to ANY model's raw scores.
+
+    Same λ-blend logic as compute_blended_drift_scores, but generalized to work
+    with any scoring method (supervised classifier outputs, IF scores, OC-SVM
+    decision function, StandardAE reconstruction errors, etc).
+
+    DriftScore(s) = λ_s · personal_zscore(s) + (1 - λ_s) · pop_zscore(s)
+    λ_s = min(1, n_s / n_min)
+
+    Args:
+        train_scores: Raw scores on CLEAN training sessions (for computing personal baselines)
+        eval_scores: Raw scores on evaluation sessions to personalize
+        train_student_ids: Student IDs parallel to train_scores
+        eval_student_ids: Student IDs parallel to eval_scores
+        n_min: Minimum sessions for full personalization (default: 5)
+
+    Returns:
+        Personalized blended scores (same shape as eval_scores)
+    """
+    from collections import defaultdict
+
+    train_scores = np.asarray(train_scores)
+    eval_scores = np.asarray(eval_scores)
+
+    # Population stats
+    pop_median = np.median(train_scores)
+    pop_mad = np.median(np.abs(train_scores - pop_median)) * 1.4826
+    if pop_mad == 0:
+        pop_mad = 1.0
+
+    # Per-student stats
+    student_scores = defaultdict(list)
+    for s, sid in zip(train_scores, train_student_ids):
+        student_scores[sid].append(s)
+
+    student_stats = {}
+    for sid, scores in student_scores.items():
+        scores = np.array(scores)
+        s_median = np.median(scores)
+        s_mad = np.median(np.abs(scores - s_median)) * 1.4826
+        if s_mad == 0:
+            s_mad = pop_mad * 0.5
+        student_stats[sid] = (s_median, s_mad, len(scores))
+
+    # Blend
+    out = np.zeros(len(eval_scores))
+    for i, (score, sid) in enumerate(zip(eval_scores, eval_student_ids)):
+        pop_z = (score - pop_median) / pop_mad
+        if sid in student_stats:
+            s_median, s_mad, n_s = student_stats[sid]
+            personal_z = (score - s_median) / s_mad
+            lam = min(1.0, n_s / n_min)
+            out[i] = lam * personal_z + (1 - lam) * pop_z
+        else:
+            out[i] = pop_z
+    return out
 
 
 def compute_combined_scores(model: nn.Module, X: torch.Tensor, device: torch.device,

@@ -18,8 +18,14 @@ from src.data_loader import (EdNetDataLoader, SessionCreator, OULADLoader,
                              encode_demographics)
 from src.feature_extraction import BehavioralFeatureExtractor, save_features, load_features
 from src.preprocessing import SyntheticAnomalyGenerator, DataPreprocessor, save_processed_data, load_processed_data
+from src.realistic_cheating_rules import RealisticCheatingGenerator
+from src.gan_model import ConditionalGANTrainer, GANConfig, compute_feature_bounds, apply_sanity_filters
+from src.transformer_vae import TransformerVAE
+from src.lstm_vae import LSTMVAE
+from src.plain_classifiers import (PlainLSTMClassifier, PlainTransformerClassifier,
+                                    ClassifierTrainer)
 from src.models import LSTMAutoencoder, TransformerAutoencoder, DemographicDiscriminator, compute_reconstruction_error
-from src.train import Trainer, compute_drift_scores, compute_blended_drift_scores, compute_combined_scores, train_baseline_models
+from src.train import Trainer, compute_drift_scores, compute_blended_drift_scores, compute_combined_scores, train_baseline_models, personalize_scores
 from src.evaluate import evaluate_model, select_optimal_threshold, compare_models, compute_classification_metrics, compute_precision_at_k
 from src.fairness import FairnessAnalyzer, compare_fairness_before_after
 from src.explainability import SHAPExplainer, SequentialSHAPExplainer, generate_explanation_report
@@ -66,23 +72,47 @@ def preprocess_data(config):
     session_features, _ = extractor.extract_features_batch(sessions)
     _, sess_mean, sess_std = extractor.normalize_features(session_features)
 
-    # ---- Extract QUESTION-LEVEL features (for LSTM) ----
-    print("\nExtracting question-level features (for LSTM)...")
-    max_seq_len = config['model'].get('max_seq_len', 50)
-    question_features_clean, seq_lengths_clean = extractor.extract_question_features_batch(
-        sessions, max_seq_len=max_seq_len
-    )
+    # ---- Extract sequence features (for LSTM / Transformer models) ----
+    # The feature level is configurable: 'question' (per-question aggregates)
+    # or 'action' (per-event, finer-grained — answers the critique that
+    # per-question aggregates hide action-level temporal drift).
+    seq_level = config['data'].get('sequence_feature_level', 'question')
+    if seq_level == 'action':
+        max_seq_len = int(config['data'].get('action_max_seq_len', 100))
+        print(f"\nExtracting ACTION-level features (max_seq_len={max_seq_len})...")
+        question_features_clean, seq_lengths_clean = extractor.extract_action_features_batch(
+            sessions, max_seq_len=max_seq_len
+        )
+        seq_feature_names = extractor.action_feature_names
+    else:
+        max_seq_len = config['model'].get('max_seq_len', 50)
+        print(f"\nExtracting QUESTION-level features (max_seq_len={max_seq_len})...")
+        question_features_clean, seq_lengths_clean = extractor.extract_question_features_batch(
+            sessions, max_seq_len=max_seq_len
+        )
+        seq_feature_names = extractor.question_feature_names
     # Compute normalization stats on CLEAN data only
     _, q_mean, q_std = extractor.normalize_question_features(
         question_features_clean, seq_lengths_clean
     )
 
     # ---- Inject synthetic anomalies ----
-    print("\nInjecting synthetic anomalies...")
-    anomaly_generator = SyntheticAnomalyGenerator(
-        contamination_rate=config['data']['synthetic_contamination'],
-        seed=config['training']['seed']
-    )
+    # Method selector: 'injection' (legacy), 'realistic' (literature-grounded),
+    # or 'gan' (realistic rules seed + GAN augmentation at the feature level).
+    method = config['data'].get('synthetic_method', 'injection')
+    print(f"\nInjecting synthetic anomalies (method='{method}')...")
+    if method == 'injection':
+        anomaly_generator = SyntheticAnomalyGenerator(
+            contamination_rate=config['data']['synthetic_contamination'],
+            seed=config['training']['seed']
+        )
+    else:
+        # Both 'realistic' and 'gan' start from realistic rules.
+        # For 'gan', the GAN augments the anomaly set after feature extraction.
+        anomaly_generator = RealisticCheatingGenerator(
+            contamination_rate=config['data']['synthetic_contamination'],
+            seed=config['training']['seed']
+        )
     sessions_with_anomalies, labels = anomaly_generator.inject_anomalies(sessions)
 
     # Re-extract BOTH feature levels from anomalous sessions
@@ -92,9 +122,14 @@ def preprocess_data(config):
         session_features_final, mean=sess_mean, std=sess_std
     )
 
-    question_features_final, seq_lengths_final = extractor.extract_question_features_batch(
-        sessions_with_anomalies, max_seq_len=max_seq_len
-    )
+    if seq_level == 'action':
+        question_features_final, seq_lengths_final = extractor.extract_action_features_batch(
+            sessions_with_anomalies, max_seq_len=max_seq_len
+        )
+    else:
+        question_features_final, seq_lengths_final = extractor.extract_question_features_batch(
+            sessions_with_anomalies, max_seq_len=max_seq_len
+        )
     question_features_final_norm, _, _ = extractor.normalize_question_features(
         question_features_final, seq_lengths_final, mean=q_mean, std=q_std
     )
@@ -175,6 +210,116 @@ def preprocess_data(config):
     sid_val = student_ids_arr[val_idx]
     sid_test = student_ids_arr[test_idx]
 
+    # ---- Optional GAN augmentation of the TRAIN partition only ----
+    # Critical design choice: we only augment training data. Val/test stay
+    # purely real + rule-based so evaluation numbers reflect the detector's
+    # real-world behaviour, not the GAN's ability to fool itself.
+    if method == 'gan' and float(config['data'].get('gan_augment_fraction', 0.0)) > 0:
+        frac = float(config['data']['gan_augment_fraction'])
+        print("\n" + "=" * 60)
+        print(f"GAN augmentation: adding {frac*100:.0f}% more anomalies to train set")
+        print("=" * 60)
+
+        gan_cfg_raw = config.get('gan', {})
+        gan_cfg = GANConfig(
+            noise_dim=int(gan_cfg_raw.get('noise_dim', 64)),
+            n_features=question_features_final_norm.shape[2],
+            max_seq_len=max_seq_len,
+            hidden_dim=int(gan_cfg_raw.get('hidden_dim', 96)),
+            n_classes=2,
+            epochs=int(gan_cfg_raw.get('epochs', 40)),
+            batch_size=int(gan_cfg_raw.get('batch_size', 128)),
+            lr=float(gan_cfg_raw.get('lr', 2e-4)),
+            beta1=float(gan_cfg_raw.get('beta1', 0.5)),
+            label_smoothing=float(gan_cfg_raw.get('label_smoothing', 0.1)),
+        )
+
+        gan_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        trainer = ConditionalGANTrainer(gan_cfg, device=gan_device)
+
+        # Train GAN on the TRAIN partition (both normals and rule-anomalies)
+        X_gan_train = question_features_final_norm[train_idx]
+        y_gan_train = labels[train_idx]
+        L_gan_train = seq_lengths_final[train_idx]
+
+        print(f"  GAN training data: {len(X_gan_train)} samples "
+              f"({y_gan_train.sum()} cheating, {(y_gan_train == 0).sum()} normal)")
+        trainer.train(X_gan_train, y_gan_train, L_gan_train)
+
+        # How many extra anomalies to generate?
+        n_train_anomalies = int(y_gan_train.sum())
+        n_extra = int(n_train_anomalies * frac)
+        # Oversample by 2x to compensate for sanity-filter rejections
+        n_request = max(n_extra * 2, 50)
+        print(f"\n  Generating {n_request} candidate GAN anomalies "
+              f"(target: keep {n_extra} after sanity filters)...")
+        X_gen, L_gen = trainer.generate(n_request, label=1)
+
+        # Sanity filters: reject out-of-range / NaN samples
+        lo, hi = compute_feature_bounds(
+            X_gan_train, L_gan_train,
+            pad=float(gan_cfg_raw.get('sanity_pad', 0.25))
+        )
+        X_kept, L_kept, rej = apply_sanity_filters(
+            X_gen, L_gen, lo, hi,
+            max_rejection_rate=float(gan_cfg_raw.get('max_rejection_rate', 0.5))
+        )
+        # Cap at the requested count
+        if len(X_kept) > n_extra:
+            X_kept = X_kept[:n_extra]
+            L_kept = L_kept[:n_extra]
+        n_added = len(X_kept)
+        print(f"  Kept {n_added}/{n_extra} GAN anomalies after sanity filtering")
+
+        if n_added > 0:
+            # Build extra rows for each tensor we need to keep aligned
+            # Feature rows: use zero-vectors for session-level (no raw session for GAN)
+            # so the GAN-augmented samples only contribute to sequence-based models.
+            zero_sess = np.zeros((n_added, session_features_final_norm.shape[1]),
+                                 dtype=session_features_final_norm.dtype)
+            zero_sess_raw = np.zeros((n_added, session_features_final.shape[1]),
+                                     dtype=session_features_final.dtype)
+
+            # Demographics: sample from TRAIN to preserve distribution
+            demo_pool = [demographics[i] for i in train_idx]
+            extra_demos = list(np.random.choice(demo_pool, size=n_added))
+
+            extra_sids = np.array([f"gan_synth_{i}" for i in range(n_added)], dtype=object)
+            extra_labels = np.ones(n_added, dtype=int)
+
+            # Extend the underlying arrays/lists. The chronological split is
+            # already done; we append these to the train side only.
+            question_features_final_norm = np.concatenate(
+                [question_features_final_norm, X_kept], axis=0)
+            seq_lengths_final = np.concatenate([seq_lengths_final, L_kept], axis=0)
+            session_features_final_norm = np.concatenate(
+                [session_features_final_norm, zero_sess], axis=0)
+            session_features_final = np.concatenate(
+                [session_features_final, zero_sess_raw], axis=0)
+            labels = np.concatenate([labels, extra_labels], axis=0)
+            demographics = demographics + extra_demos
+            student_ids = list(student_ids) + list(extra_sids)
+
+            # Their new indices go into train_idx
+            new_indices = np.arange(
+                len(question_features_final_norm) - n_added,
+                len(question_features_final_norm)
+            )
+            train_idx = np.concatenate([train_idx, new_indices])
+
+            # Re-split the already-assigned slices on the (now-extended) arrays
+            X_train_sess = session_features_final_norm[train_idx]
+            X_train_sess_raw = session_features_final[train_idx]
+            X_train_seq = question_features_final_norm[train_idx]
+            L_train = seq_lengths_final[train_idx]
+            y_train = labels[train_idx]
+            demo_train = [demographics[i] for i in train_idx]
+            student_ids_arr = np.array(student_ids, dtype=object)
+            sid_train = student_ids_arr[train_idx]
+
+            print(f"  Train set now: {len(train_idx)} samples "
+                  f"({int(y_train.sum())} cheating, {int((y_train == 0).sum())} normal)")
+
     # Encode demographics for adversarial fairness training
     fairness_attr = config.get('fairness_training', {}).get('attribute', 'gender')
     demo_labels_all, demo_label_map = encode_demographics(demographics, attribute=fairness_attr)
@@ -221,7 +366,7 @@ def preprocess_data(config):
         'q_mean': q_mean,
         'q_std': q_std,
         'feature_names': extractor.feature_names,
-        'question_feature_names': extractor.question_feature_names,
+        'question_feature_names': seq_feature_names,
         # Student IDs (for personalized blended drift scoring)
         'sid_train': sid_train,
         'sid_val': sid_val,
@@ -264,6 +409,12 @@ def train_models(config, processed_data):
 
     device = get_device(config['training']['device'])
     ensure_dir(config['output']['models_dir'])
+
+    # Derive the effective max_seq_len from the preprocessed data so that
+    # all sequence models agree on tensor shape regardless of feature level.
+    # This prevents Transformer positional-encoding shape mismatches when
+    # switching between question-level (50) and action-level (100) features.
+    effective_max_seq_len = int(processed_data['X_train_seq'].shape[1])
 
     X_train_seq = processed_data['X_train_seq']
     X_val_seq = processed_data['X_val_seq']
@@ -392,7 +543,7 @@ def train_models(config, processed_data):
         nhead=tf_cfg['nhead'],
         num_layers=tf_cfg['num_layers'],
         latent_dim=tf_cfg['latent_dim'],
-        max_seq_len=tf_cfg['max_seq_len'],
+        max_seq_len=int(processed_data['X_train_seq'].shape[1]),
         dropout=tf_cfg['dropout']
     )
 
@@ -427,6 +578,198 @@ def train_models(config, processed_data):
     )
 
     # ================================================================
+    # 2b-bis. Transformer VAE (skip if checkpoint already exists)
+    # ================================================================
+    vae_cfg = config.get('transformer_vae')
+    tvae_model = None
+    tvae_train_errors = None
+    if vae_cfg is not None:
+        tvae_save_dir = os.path.join(config['output']['models_dir'], 'transformer_vae')
+        tvae_ckpt = os.path.join(tvae_save_dir, 'best_model.pth')
+        tvae_model = TransformerVAE(
+            input_dim=vae_cfg['input_dim'],
+            d_model=vae_cfg['d_model'],
+            nhead=vae_cfg['nhead'],
+            num_layers=vae_cfg['num_layers'],
+            latent_dim=vae_cfg['latent_dim'],
+            max_seq_len=int(processed_data['X_train_seq'].shape[1]),
+            dropout=vae_cfg['dropout'],
+            kl_beta=float(vae_cfg.get('kl_beta', 0.05)),
+        )
+
+        if os.path.exists(tvae_ckpt) and not force_retrain:
+            print("\n" + "=" * 60)
+            print("Transformer VAE checkpoint found — skipping training.")
+            print("=" * 60)
+            ckpt = torch.load(tvae_ckpt, map_location=device)
+            tvae_model.load_state_dict(ckpt['model_state_dict'])
+            tvae_model.to(device)
+            tvae_history = {}
+        else:
+            print("\n" + "=" * 60)
+            print("Training Transformer VAE...")
+            print("=" * 60)
+            print(f"  Architecture: d_model={vae_cfg['d_model']}, heads={vae_cfg['nhead']}, "
+                  f"latent={vae_cfg['latent_dim']}, kl_beta={vae_cfg.get('kl_beta', 0.05)}")
+            tvae_trainer = Trainer(tvae_model, config, device, discriminator=None)
+            ensure_dir(tvae_save_dir)
+            tvae_history = tvae_trainer.train(
+                train_loader, val_loader,
+                epochs=config['training']['epochs'],
+                save_dir=tvae_save_dir
+            )
+            tvae_trainer.load_checkpoint(tvae_ckpt)
+
+        print("\nComputing Transformer-VAE training reconstruction errors (clean sessions only)...")
+        tvae_train_errors, _ = compute_drift_scores(
+            tvae_model, X_train_clean_tensor, device, lengths=L_train_clean_tensor
+        )
+
+    # ================================================================
+    # 2b-ter. LSTM VAE (skip if checkpoint already exists)
+    # ================================================================
+    lvae_cfg = config.get('lstm_vae')
+    lvae_model = None
+    lvae_train_errors = None
+    if lvae_cfg is not None:
+        lvae_save_dir = os.path.join(config['output']['models_dir'], 'lstm_vae')
+        lvae_ckpt = os.path.join(lvae_save_dir, 'best_model.pth')
+        lvae_model = LSTMVAE(
+            input_dim=lvae_cfg['input_dim'],
+            hidden_dim=lvae_cfg['hidden_dim'],
+            latent_dim=lvae_cfg['latent_dim'],
+            num_layers=lvae_cfg['num_layers'],
+            dropout=float(lvae_cfg.get('dropout', 0.35)),
+            kl_beta=float(lvae_cfg.get('kl_beta', 0.05)),
+        )
+        if os.path.exists(lvae_ckpt) and not force_retrain:
+            print("\n" + "=" * 60)
+            print("LSTM VAE checkpoint found — skipping training.")
+            print("=" * 60)
+            ckpt = torch.load(lvae_ckpt, map_location=device)
+            lvae_model.load_state_dict(ckpt['model_state_dict'])
+            lvae_model.to(device)
+        else:
+            print("\n" + "=" * 60)
+            print("Training LSTM VAE...")
+            print("=" * 60)
+            lvae_trainer = Trainer(lvae_model, config, device, discriminator=None)
+            ensure_dir(lvae_save_dir)
+            lvae_trainer.train(
+                train_loader, val_loader,
+                epochs=config['training']['epochs'],
+                save_dir=lvae_save_dir
+            )
+            lvae_trainer.load_checkpoint(lvae_ckpt)
+
+        print("\nComputing LSTM-VAE training reconstruction errors (clean sessions only)...")
+        lvae_train_errors, _ = compute_drift_scores(
+            lvae_model, X_train_clean_tensor, device, lengths=L_train_clean_tensor
+        )
+
+    # ================================================================
+    # 2b-quat. Plain LSTM / Transformer supervised classifiers (ablation)
+    # ================================================================
+    # These train on the FULL training set (normals + anomalies) with
+    # binary labels — representing a *supervised* comparison to show how
+    # much signal the unsupervised AEs leave on the table.
+    pc_cfg = config.get('plain_classifiers', {})
+    plain_lstm_model = None
+    plain_tf_model = None
+    if pc_cfg.get('enabled', False):
+        plain_save_dir = os.path.join(config['output']['models_dir'], 'plain_classifiers')
+        ensure_dir(plain_save_dir)
+
+        # Supervised training uses full train/val with labels
+        X_train_full = processed_data['X_train_seq']
+        L_train_full = processed_data['L_train']
+        y_train_full = processed_data['y_train']
+        X_val_full = processed_data['X_val_seq']
+        L_val_full = processed_data['L_val']
+        y_val_full = processed_data['y_val']
+
+        pos_weight = float((y_train_full == 0).sum() / max(1, (y_train_full == 1).sum()))
+        input_dim = int(X_train_full.shape[2])
+        effective_seq_len = int(X_train_full.shape[1])
+
+        # --- Plain LSTM ---
+        lstm_pc_cfg = pc_cfg.get('lstm', {})
+        lstm_ckpt = os.path.join(plain_save_dir, 'plain_lstm.pth')
+        plain_lstm_model = PlainLSTMClassifier(
+            input_dim=input_dim,
+            hidden_dim=int(lstm_pc_cfg.get('hidden_dim', 96)),
+            num_layers=int(lstm_pc_cfg.get('num_layers', 2)),
+            dropout=float(lstm_pc_cfg.get('dropout', 0.35)),
+        )
+        if os.path.exists(lstm_ckpt) and not force_retrain:
+            print("\n" + "=" * 60)
+            print("Plain LSTM classifier checkpoint found — skipping training.")
+            print("=" * 60)
+            ckpt = torch.load(lstm_ckpt, map_location=device)
+            plain_lstm_model.load_state_dict(ckpt['model_state_dict'])
+            plain_lstm_model.to(device)
+        else:
+            print("\n" + "=" * 60)
+            print("Training Plain LSTM classifier (supervised)...")
+            print("=" * 60)
+            trainer = ClassifierTrainer(
+                plain_lstm_model, device,
+                lr=float(pc_cfg.get('learning_rate', 1e-3)),
+                weight_decay=float(config['training'].get('weight_decay', 5e-4)),
+                pos_weight=pos_weight,
+                gradient_clip=float(config['training'].get('gradient_clip', 1.0)),
+            )
+            trainer.train(
+                X_train_full, y_train_full, L_train_full,
+                X_val_full, y_val_full, L_val_full,
+                epochs=int(pc_cfg.get('epochs', 30)),
+                batch_size=int(pc_cfg.get('batch_size', 256)),
+                patience=int(pc_cfg.get('patience', 7)),
+                save_path=lstm_ckpt,
+            )
+
+        # --- Plain Transformer ---
+        tf_pc_cfg = pc_cfg.get('transformer', {})
+        tf_ckpt = os.path.join(plain_save_dir, 'plain_transformer.pth')
+        plain_tf_model = PlainTransformerClassifier(
+            input_dim=input_dim,
+            d_model=int(tf_pc_cfg.get('d_model', 96)),
+            nhead=int(tf_pc_cfg.get('nhead', 4)),
+            num_layers=int(tf_pc_cfg.get('num_layers', 2)),
+            max_seq_len=effective_seq_len,
+            dropout=float(tf_pc_cfg.get('dropout', 0.2)),
+        )
+        if os.path.exists(tf_ckpt) and not force_retrain:
+            print("\n" + "=" * 60)
+            print("Plain Transformer classifier checkpoint found — skipping training.")
+            print("=" * 60)
+            ckpt = torch.load(tf_ckpt, map_location=device)
+            plain_tf_model.load_state_dict(ckpt['model_state_dict'])
+            plain_tf_model.to(device)
+        else:
+            print("\n" + "=" * 60)
+            print("Training Plain Transformer classifier (supervised)...")
+            print("=" * 60)
+            trainer = ClassifierTrainer(
+                plain_tf_model, device,
+                lr=float(pc_cfg.get('learning_rate', 1e-3)),
+                weight_decay=float(config['training'].get('weight_decay', 5e-4)),
+                pos_weight=pos_weight,
+                gradient_clip=float(config['training'].get('gradient_clip', 1.0)),
+            )
+            trainer.train(
+                X_train_full, y_train_full, L_train_full,
+                X_val_full, y_val_full, L_val_full,
+                epochs=int(pc_cfg.get('epochs', 30)),
+                batch_size=int(pc_cfg.get('batch_size', 256)),
+                patience=int(pc_cfg.get('patience', 7)),
+                save_path=tf_ckpt,
+            )
+
+    processed_data['plain_lstm_model'] = plain_lstm_model
+    processed_data['plain_tf_model'] = plain_tf_model
+
+    # ================================================================
     # 2c. Baseline models (session-level)
     # ================================================================
     print("\n" + "=" * 60)
@@ -452,6 +795,8 @@ def train_models(config, processed_data):
     np.savez(errors_path,
              lstm_train_errors=lstm_train_errors,
              tf_train_errors=tf_train_errors,
+             tvae_train_errors=tvae_train_errors if tvae_train_errors is not None else np.array([]),
+             lvae_train_errors=lvae_train_errors if lvae_train_errors is not None else np.array([]),
              std_ae_train_errors=std_ae_train_errors if std_ae_train_errors is not None else np.array([]),
              sid_train_clean=sid_train_clean if sid_train_clean is not None else np.array([]))
     print(f"Saved train errors to {errors_path}")
@@ -466,6 +811,10 @@ def train_models(config, processed_data):
     processed_data['sid_train_clean'] = sid_train_clean
     processed_data['lstm_history'] = lstm_history
     processed_data['tf_history'] = tf_history
+    processed_data['tvae_model'] = tvae_model
+    processed_data['tvae_train_errors'] = tvae_train_errors
+    processed_data['lvae_model'] = lvae_model
+    processed_data['lvae_train_errors'] = lvae_train_errors
 
     print("\nAll model training complete!")
     return processed_data
@@ -500,7 +849,7 @@ def _load_trained_models(config, processed_data, device):
         nhead=tf_cfg['nhead'],
         num_layers=tf_cfg['num_layers'],
         latent_dim=tf_cfg['latent_dim'],
-        max_seq_len=tf_cfg['max_seq_len'],
+        max_seq_len=int(processed_data['X_train_seq'].shape[1]),
         dropout=tf_cfg['dropout']
     )
     tf_ckpt = os.path.join(config['output']['models_dir'], 'transformer_ae', 'best_model.pth')
@@ -510,6 +859,87 @@ def _load_trained_models(config, processed_data, device):
     processed_data['tf_model'] = tf_model
     print(f"  Loaded Transformer-AE from {tf_ckpt}")
 
+    # Transformer VAE (optional)
+    vae_cfg = config.get('transformer_vae')
+    if vae_cfg is not None:
+        tvae_ckpt = os.path.join(config['output']['models_dir'], 'transformer_vae', 'best_model.pth')
+        if os.path.exists(tvae_ckpt):
+            tvae_model = TransformerVAE(
+                input_dim=vae_cfg['input_dim'],
+                d_model=vae_cfg['d_model'],
+                nhead=vae_cfg['nhead'],
+                num_layers=vae_cfg['num_layers'],
+                latent_dim=vae_cfg['latent_dim'],
+                max_seq_len=int(processed_data['X_train_seq'].shape[1]),
+                dropout=vae_cfg['dropout'],
+                kl_beta=float(vae_cfg.get('kl_beta', 0.05)),
+            )
+            ckpt = torch.load(tvae_ckpt, map_location=device)
+            tvae_model.load_state_dict(ckpt['model_state_dict'])
+            tvae_model.to(device)
+            processed_data['tvae_model'] = tvae_model
+            print(f"  Loaded Transformer-VAE from {tvae_ckpt}")
+        else:
+            processed_data['tvae_model'] = None
+
+    # LSTM VAE (optional)
+    lvae_cfg = config.get('lstm_vae')
+    if lvae_cfg is not None:
+        lvae_ckpt = os.path.join(config['output']['models_dir'], 'lstm_vae', 'best_model.pth')
+        if os.path.exists(lvae_ckpt):
+            lvae_model = LSTMVAE(
+                input_dim=lvae_cfg['input_dim'],
+                hidden_dim=lvae_cfg['hidden_dim'],
+                latent_dim=lvae_cfg['latent_dim'],
+                num_layers=lvae_cfg['num_layers'],
+                dropout=float(lvae_cfg.get('dropout', 0.35)),
+                kl_beta=float(lvae_cfg.get('kl_beta', 0.05)),
+            )
+            ckpt = torch.load(lvae_ckpt, map_location=device)
+            lvae_model.load_state_dict(ckpt['model_state_dict'])
+            lvae_model.to(device)
+            processed_data['lvae_model'] = lvae_model
+            print(f"  Loaded LSTM-VAE from {lvae_ckpt}")
+        else:
+            processed_data['lvae_model'] = None
+
+    # Plain classifiers (optional)
+    pc_cfg = config.get('plain_classifiers', {})
+    if pc_cfg.get('enabled', False):
+        plain_dir = os.path.join(config['output']['models_dir'], 'plain_classifiers')
+        input_dim = int(processed_data['X_train_seq'].shape[2])
+        seq_len = int(processed_data['X_train_seq'].shape[1])
+        # Plain LSTM
+        lstm_ckpt = os.path.join(plain_dir, 'plain_lstm.pth')
+        if os.path.exists(lstm_ckpt):
+            lstm_pc_cfg = pc_cfg.get('lstm', {})
+            m = PlainLSTMClassifier(
+                input_dim=input_dim,
+                hidden_dim=int(lstm_pc_cfg.get('hidden_dim', 96)),
+                num_layers=int(lstm_pc_cfg.get('num_layers', 2)),
+                dropout=float(lstm_pc_cfg.get('dropout', 0.35)),
+            )
+            m.load_state_dict(torch.load(lstm_ckpt, map_location=device)['model_state_dict'])
+            m.to(device)
+            processed_data['plain_lstm_model'] = m
+            print(f"  Loaded Plain LSTM classifier from {lstm_ckpt}")
+        # Plain Transformer
+        tf_ckpt = os.path.join(plain_dir, 'plain_transformer.pth')
+        if os.path.exists(tf_ckpt):
+            tf_pc_cfg = pc_cfg.get('transformer', {})
+            m = PlainTransformerClassifier(
+                input_dim=input_dim,
+                d_model=int(tf_pc_cfg.get('d_model', 96)),
+                nhead=int(tf_pc_cfg.get('nhead', 4)),
+                num_layers=int(tf_pc_cfg.get('num_layers', 2)),
+                max_seq_len=seq_len,
+                dropout=float(tf_pc_cfg.get('dropout', 0.2)),
+            )
+            m.load_state_dict(torch.load(tf_ckpt, map_location=device)['model_state_dict'])
+            m.to(device)
+            processed_data['plain_tf_model'] = m
+            print(f"  Loaded Plain Transformer classifier from {tf_ckpt}")
+
     # Baselines
     baselines_path = os.path.join(config['output']['models_dir'], 'baselines.pkl')
     with open(baselines_path, 'rb') as f:
@@ -518,9 +948,13 @@ def _load_trained_models(config, processed_data, device):
 
     # Train errors (needed for drift score normalization)
     errors_path = os.path.join(config['output']['models_dir'], 'train_errors.npz')
-    errors = np.load(errors_path)
+    errors = np.load(errors_path, allow_pickle=True)
     processed_data['lstm_train_errors'] = errors['lstm_train_errors']
     processed_data['tf_train_errors'] = errors['tf_train_errors']
+    tvae_err = errors['tvae_train_errors'] if 'tvae_train_errors' in errors.files else np.array([])
+    processed_data['tvae_train_errors'] = tvae_err if len(tvae_err) > 0 else None
+    lvae_err = errors['lvae_train_errors'] if 'lvae_train_errors' in errors.files else np.array([])
+    processed_data['lvae_train_errors'] = lvae_err if len(lvae_err) > 0 else None
     std_ae_err = errors['std_ae_train_errors']
     processed_data['std_ae_train_errors'] = std_ae_err if len(std_ae_err) > 0 else None
     sid_clean = errors.get('sid_train_clean', np.array([]))
@@ -653,9 +1087,134 @@ def evaluate_models(config, processed_data):
         X_train_seq=X_train_seq_clean, L_train=L_train_clean
     )
 
+    # ---- 2a-bis. LSTM VAE (if trained) ----
+    lvae_model = processed_data.get('lvae_model')
+    lvae_errs = processed_data.get('lvae_train_errors')
+    if lvae_model is not None and lvae_errs is not None:
+        _eval_sequence_model(
+            'LSTM-VAE', lvae_model, lvae_errs,
+            X_val_seq, X_test_seq, L_val, L_test, y_val, y_test, device,
+            all_results, all_scores, all_predictions,
+            sid_train_clean=sid_train_clean, sid_val=sid_val, sid_test=sid_test,
+            X_train_seq=X_train_seq_clean, L_train=L_train_clean
+        )
+
+    # ---- 2b. Transformer VAE (if trained) ----
+    tvae_model = processed_data.get('tvae_model')
+    tvae_errs = processed_data.get('tvae_train_errors')
+    if tvae_model is not None and tvae_errs is not None:
+        _eval_sequence_model(
+            'Transformer-VAE', tvae_model, tvae_errs,
+            X_val_seq, X_test_seq, L_val, L_test, y_val, y_test, device,
+            all_results, all_scores, all_predictions,
+            sid_train_clean=sid_train_clean, sid_val=sid_val, sid_test=sid_test,
+            X_train_seq=X_train_seq_clean, L_train=L_train_clean
+        )
+
+    # ---- 2c. Plain supervised classifiers + Personalized variants ----
+    # Batched inference to avoid OOM on large sequence tensors
+    def _batched_supervised_scores(pc_model, X_np, L_np, batch_size=256):
+        pc_model.eval()
+        out = []
+        n = X_np.shape[0]
+        with torch.no_grad():
+            for i in range(0, n, batch_size):
+                xb = torch.FloatTensor(X_np[i:i+batch_size]).to(device)
+                lb = torch.LongTensor(L_np[i:i+batch_size]).to(device)
+                s = torch.sigmoid(pc_model(xb, lb)).cpu().numpy()
+                out.append(s)
+                del xb, lb
+            if device.type == 'cuda':
+                torch.cuda.empty_cache()
+        return np.concatenate(out, axis=0)
+
+    # Need scores on the CLEAN training set for per-student baselines
+    X_train_clean_np = X_train_seq_clean
+    L_train_clean_np = L_train_clean
+    sid_train_clean_np = sid_train_clean
+
+    for pc_name, pc_model in [
+        ('Plain-LSTM (supervised)', processed_data.get('plain_lstm_model')),
+        ('Plain-Transformer (supervised)', processed_data.get('plain_tf_model')),
+    ]:
+        if pc_model is None:
+            continue
+        print(f"\nEvaluating {pc_name}...")
+        val_scores = _batched_supervised_scores(pc_model, X_val_seq, L_val)
+        test_scores = _batched_supervised_scores(pc_model, X_test_seq, L_test)
+
+        # --- population (global) variant ---
+        pc_thresh = select_optimal_threshold(y_val, val_scores, method='f1_weighted')
+        print(f"  {pc_name} threshold: {pc_thresh:.4f}")
+        preds = (test_scores > pc_thresh).astype(int)
+        metrics = compute_classification_metrics(y_test, preds, test_scores)
+        all_results[pc_name] = metrics
+        all_scores[pc_name] = test_scores
+        all_predictions[pc_name] = preds
+        print(f"  ROC-AUC: {metrics.get('roc_auc', 0):.4f} | "
+              f"F1: {metrics['f1']:.4f} | "
+              f"Precision: {metrics['precision']:.4f} | "
+              f"Recall: {metrics['recall']:.4f}")
+
+        # --- personalized variant ---
+        if sid_train_clean_np is not None and sid_val is not None and sid_test is not None:
+            print(f"  Computing personalized scoring for {pc_name}...")
+            train_scores_clean = _batched_supervised_scores(pc_model, X_train_clean_np, L_train_clean_np)
+            val_scores_pers = personalize_scores(train_scores_clean, val_scores,
+                                                  sid_train_clean_np, sid_val)
+            test_scores_pers = personalize_scores(train_scores_clean, test_scores,
+                                                   sid_train_clean_np, sid_test)
+            pc_thresh_p = select_optimal_threshold(y_val, val_scores_pers, method='f1_weighted')
+            print(f"  {pc_name} (Personalized) threshold: {pc_thresh_p:.4f}")
+            preds_p = (test_scores_pers > pc_thresh_p).astype(int)
+            metrics_p = compute_classification_metrics(y_test, preds_p, test_scores_pers)
+            pers_name = pc_name.replace(' (supervised)', ' + Personalized')
+            all_results[pers_name] = metrics_p
+            all_scores[pers_name] = test_scores_pers
+            all_predictions[pers_name] = preds_p
+            print(f"  ROC-AUC: {metrics_p.get('roc_auc', 0):.4f} | "
+                  f"F1: {metrics_p['f1']:.4f} | "
+                  f"Precision: {metrics_p['precision']:.4f} | "
+                  f"Recall: {metrics_p['recall']:.4f}")
+
     # ---- 3. Baseline models (each gets its OWN threshold) ----
+    # For IF / OC-SVM / StandardAE we also compute a personalized variant
+    X_train_sess = processed_data.get('X_train_sess')
+    y_train_full = processed_data.get('y_train')
+    if X_train_sess is not None and y_train_full is not None:
+        normal_mask_sess = (y_train_full == 0)
+        X_train_sess_clean = X_train_sess[normal_mask_sess]
+        sid_train_sess_clean = (np.array(processed_data.get('sid_train'))[normal_mask_sess]
+                                if processed_data.get('sid_train') is not None else None)
+    else:
+        X_train_sess_clean = None
+        sid_train_sess_clean = None
+
+    def _add_personalized_baseline(name, val_raw, test_raw, train_raw):
+        """Add a '+Personalized' row for a classical baseline."""
+        if (sid_train_sess_clean is None or sid_val is None or sid_test is None
+                or train_raw is None):
+            return
+        val_p = personalize_scores(train_raw, val_raw, sid_train_sess_clean, sid_val)
+        test_p = personalize_scores(train_raw, test_raw, sid_train_sess_clean, sid_test)
+        th_p = select_optimal_threshold(y_val, val_p, method='f1_weighted')
+        preds_p = (test_p > th_p).astype(int)
+        metrics_p = compute_classification_metrics(y_test, preds_p, test_p)
+        pers_name = f"{name} + Personalized"
+        all_results[pers_name] = metrics_p
+        all_scores[pers_name] = test_p
+        all_predictions[pers_name] = preds_p
+        print(f"  [{pers_name}] threshold: {th_p:.4f}")
+        print(f"  ROC-AUC: {metrics_p.get('roc_auc', 0):.4f} | "
+              f"F1: {metrics_p['f1']:.4f} | "
+              f"Precision: {metrics_p['precision']:.4f} | "
+              f"Recall: {metrics_p['recall']:.4f}")
+
     for baseline_name, baseline_model in baselines.items():
         print(f"\nEvaluating {baseline_name}...")
+        val_raw = None
+        test_raw = None
+        train_raw = None
 
         if baseline_name == 'StandardAutoencoder':
             X_val_ae = X_val_sess[:, np.newaxis, :]
@@ -668,10 +1227,11 @@ def evaluate_models(config, processed_data):
                 baseline_model, X_test_ae, y_test, ae_threshold, device,
                 model_type='standard_ae', train_errors=std_ae_train_errors
             )
+            val_raw = val_scores_ae
+            test_raw = scores
+            train_raw = std_ae_train_errors
 
         elif baseline_name == 'RuleBased':
-            # IMPORTANT: pass RAW (unnormalized) features to RuleBased
-            # because its thresholds are in original units (seconds, counts)
             rb_features = X_test_sess_raw if X_test_sess_raw is not None else X_test_sess
             metrics, scores, preds = evaluate_model(
                 baseline_model, rb_features, y_test, 0, device,
@@ -686,15 +1246,22 @@ def evaluate_models(config, processed_data):
                 baseline_model, X_test_sess, y_test, bl_threshold, device,
                 model_type='sklearn'
             )
+            val_raw = val_scores_bl
+            test_raw = scores
+            if X_train_sess_clean is not None:
+                train_raw = baseline_model.score_samples(X_train_sess_clean)
 
         all_results[baseline_name] = metrics
         all_scores[baseline_name] = scores
         all_predictions[baseline_name] = preds
-
         print(f"  ROC-AUC: {metrics.get('roc_auc', 0):.4f} | "
               f"F1: {metrics['f1']:.4f} | "
               f"Precision: {metrics['precision']:.4f} | "
               f"Recall: {metrics['recall']:.4f}")
+
+        # Personalized variant (skip RuleBased — binary output, no scoring to personalize)
+        if baseline_name != 'RuleBased' and val_raw is not None:
+            _add_personalized_baseline(baseline_name, val_raw, test_raw, train_raw)
 
     # Compare all 6 models
     compare_models(all_results)

@@ -420,28 +420,31 @@ class RuleBasedDetector:
 
 def compute_reconstruction_error(model: nn.Module, X: torch.Tensor,
                                 device: torch.device,
-                                lengths: torch.Tensor = None) -> np.ndarray:
-    """Compute per-sample reconstruction error, masked for padded positions."""
+                                lengths: torch.Tensor = None,
+                                batch_size: int = 256) -> np.ndarray:
+    """Compute per-sample reconstruction error, masked for padded positions (batched for memory safety)."""
     model.eval()
+    out = []
+    n = X.shape[0]
     with torch.no_grad():
-        X = X.to(device)
-        if lengths is not None:
-            lengths = lengths.to(device)
-        if lengths is not None:
-            reconstruction, _ = model(X, lengths)
-        else:
-            reconstruction, _ = model(X)
+        for i in range(0, n, batch_size):
+            xb = X[i:i+batch_size].to(device)
+            lb = lengths[i:i+batch_size].to(device) if lengths is not None else None
 
-        if lengths is not None:
-            # Masked MSE: only count valid (non-padded) timesteps
-            batch_size, seq_len, feat_dim = X.shape
-            mask = torch.zeros(batch_size, seq_len, 1, device=device)
-            for i in range(batch_size):
-                mask[i, :lengths[i], :] = 1.0
-            diff_sq = (X - reconstruction) ** 2 * mask
-            # Sum over seq and features, divide by (length * features) per sample
-            mse = diff_sq.sum(dim=(1, 2)) / (lengths.float() * feat_dim)
-        else:
-            mse = torch.mean((X - reconstruction) ** 2, dim=(1, 2))
+            if lb is not None:
+                reconstruction, _ = model(xb, lb)
+                bs, seq_len, feat_dim = xb.shape
+                mask = torch.zeros(bs, seq_len, 1, device=device)
+                for j in range(bs):
+                    mask[j, :lb[j], :] = 1.0
+                diff_sq = (xb - reconstruction) ** 2 * mask
+                mse = diff_sq.sum(dim=(1, 2)) / (lb.float() * feat_dim)
+            else:
+                reconstruction, _ = model(xb)
+                mse = torch.mean((xb - reconstruction) ** 2, dim=(1, 2))
 
-        return mse.cpu().numpy()
+            out.append(mse.cpu().numpy())
+            del xb, reconstruction, mse
+        if device.type == 'cuda':
+            torch.cuda.empty_cache()
+    return np.concatenate(out, axis=0)

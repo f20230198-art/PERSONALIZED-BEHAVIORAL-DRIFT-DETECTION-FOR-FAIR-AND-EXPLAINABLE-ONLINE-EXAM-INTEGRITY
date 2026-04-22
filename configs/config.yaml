@@ -13,6 +13,16 @@ data:
   val_ratio: 0.15
   test_ratio: 0.15
   synthetic_contamination: 0.15  # 15% anomaly injection — more signal for threshold optimization
+  # Anomaly generation method. Options:
+  #   'injection'  – legacy rule-based injection (unrealistic 3-8x compression)
+  #   'realistic'  – literature-grounded rules (1.5-3x compression, lookup behaviour, etc.)
+  #   'gan'        – GAN-augmented: realistic rules used as seed, then GAN adds variety
+  synthetic_method: "gan"
+  gan_augment_fraction: 0.5   # fraction of anomalies to replace with GAN-generated (0 = none)
+  # Feature level for sequence models. 'question' = per-question aggregates (10 features, len<=50).
+  # 'action' = per-action raw-event features (10 features, len<=100) — more sequential signal.
+  sequence_feature_level: "action"
+  action_max_seq_len: 100
 
 # Feature Engineering
 features:
@@ -37,7 +47,7 @@ model:
   hidden_dim: 96    # enough capacity to learn normal patterns well
   latent_dim: 32    # wider bottleneck improves normal reconstruction quality
   num_layers: 2
-  dropout: 0.2
+  dropout: 0.2      # reverted from 0.35 — 0.35 caused LSTM-AE threshold collapse (recall 0.91, precision 0.15)
   bidirectional: false
   max_seq_len: 50
 
@@ -52,15 +62,67 @@ transformer:
   max_seq_len: 50
   dropout: 0.2
 
+# LSTM VAE (variational version of LSTM autoencoder)
+lstm_vae:
+  name: "LSTMVAE"
+  input_dim: 10
+  hidden_dim: 96
+  latent_dim: 32
+  num_layers: 2
+  dropout: 0.2      # reverted from 0.35 for consistency with LSTM-AE fix
+  kl_beta: 0.05
+
+# Transformer VAE (variational version of Transformer autoencoder)
+transformer_vae:
+  name: "TransformerVAE"
+  input_dim: 10
+  d_model: 96
+  nhead: 4
+  num_layers: 2
+  latent_dim: 32
+  max_seq_len: 50
+  dropout: 0.2
+  kl_beta: 0.05       # KL weight — small so reconstruction stays sharp
+
+# Plain supervised classifiers (ablation baselines)
+# These train directly on synthetic labels — represents a supervised upper bound.
+plain_classifiers:
+  enabled: true
+  epochs: 30
+  batch_size: 256
+  learning_rate: 0.001
+  patience: 7
+  lstm:
+    hidden_dim: 96
+    num_layers: 2
+    dropout: 0.2
+  transformer:
+    d_model: 96
+    nhead: 4
+    num_layers: 2
+    dropout: 0.2
+
+# Conditional GAN (used when data.synthetic_method == 'gan')
+gan:
+  noise_dim: 64
+  hidden_dim: 96
+  epochs: 40
+  batch_size: 512   # GAN is small, big batch keeps GPU saturated
+  lr: 0.0002
+  beta1: 0.5
+  label_smoothing: 0.1
+  sanity_pad: 0.25          # allow 25% headroom beyond real feature ranges
+  max_rejection_rate: 0.5   # warn if more than 50% of GAN samples rejected
+
 # Training
 training:
-  batch_size: 32
+  batch_size: 256   # up from 32 — RTX 4060 has 8GB VRAM, small seq tensors easily fit
   epochs: 300  # More epochs for larger model to converge
   learning_rate: 0.001
   optimizer: "Adam"
   loss: "MSE"
   early_stopping_patience: 30  # more patience for larger model
-  weight_decay: 0.0001
+  weight_decay: 0.0001   # reverted from 0.0005 — over-regularization underfit normal sessions
   gradient_clip: 1.0
   device: "cuda"
   seed: 42

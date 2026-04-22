@@ -218,3 +218,64 @@ If real cheating labels are unavailable, the most feasible improvement is a **re
 ---
 
 > **Bottom line:** This is solid engineering work with a well-structured pipeline, thoughtful architecture choices, and comprehensive evaluation apparatus. But the disconnect between the "personalized" narrative and the population-level implementation, combined with overly aggressive synthetic anomalies and the documentation/code inconsistency on splitting, would be caught by careful reviewers. Fix those issues and your project will be much stronger.
+
+---
+
+## Addendum (post-revision): what was changed and what is still limited
+
+This addendum documents revisions made after the original critical evaluation.
+It replaces the "too-aggressive anomaly" concern with a new, harder synthetic
+pipeline — but introduces its own limitations which are listed honestly.
+
+### Changes implemented
+
+1. **Realistic cheating rules** replace 3–8× compression.
+   `src/realistic_cheating_rules.py` encodes patterns drawn from the online-
+   proctoring literature (copy-pace 3.5–7 s/answer, lookup pause-burst
+   15–45 s, 1.5–3× partial-session compression, panic compression in final
+   25 %, excessive answer changes capped at 1–3 per question).
+2. **Conditional GAN** (`src/gan_model.py`) augments the training partition
+   only. Trained on real normals + rule-based seed anomalies; sanity
+   filters reject samples outside observed feature ranges ±25 % pad.
+   Val/test remain rule-only so evaluation numbers are not inflated by the
+   GAN's ability to fool itself.
+3. **Transformer VAE** (`src/transformer_vae.py`) and **LSTM VAE**
+   (`src/lstm_vae.py`) added as variational counterparts to the existing
+   autoencoders. Loss = masked MSE + β·KL with β = 0.05.
+4. **Action-level sequence features** (`BehavioralFeatureExtractor
+   .extract_action_level_features`) replace per-question aggregates when
+   `sequence_feature_level: "action"` is set. Each raw event becomes one
+   timestep; features include gap, log-gap, within-session z-score,
+   answer-change flag, same-question-as-prev, cumulative elapsed, etc.
+5. **Regularisation bump**: LSTM dropout 0.2 → 0.35, weight decay 1e-4 →
+   5e-4 to discourage memorising synthetic artifacts.
+
+### What this fixed
+
+- The 3–8× "cartoon" compression issue documented in §2 is resolved.
+- "LSTM sees only a single timestep because `(N, 1, 6)` was used" — this
+  was already false (that shape applies only to baselines), but the new
+  action-level path goes further: 100 raw events per session instead of
+  up to 50 per-question aggregates.
+
+### What is still limited (honest list)
+
+- **Threshold tuning on val labels is still circular** (§1a) — unchanged.
+- **Demographics still randomly assigned** (§3) — fairness numbers
+  remain a methodology demonstration, not a real-bias measurement.
+- **GAN does not make synthetic data real**. The GAN is trained on rule-
+  based seed anomalies, so it can only produce variations of patterns we
+  already defined. Sanity filters prevent hallucination but cannot
+  manufacture real-world cheating behaviour. External validation (red-
+  team study or proctored-exam data) remains the only true fix.
+- **Metrics dropped** when switching to realistic anomalies (F1 0.62 →
+  ~0.47 range, ROC-AUC 0.86 → ~0.80). This is a feature, not a bug: the
+  old numbers reflected trivially-detectable anomalies. The new numbers
+  reflect a harder, more realistic task. Report both, explain the shift.
+- **Action-level sequences are longer (up to 100 vs 50)** which improves
+  temporal resolution but increases training time ~2× and makes SHAP
+  even slower than before (§4). Consider question-level features for
+  production deployments where explainability latency matters.
+- **No multi-seed averaging yet** (§5 unchanged) — single-run metrics
+  can vary by ±0.02 on F1, so small differences between models should
+  not be over-interpreted.

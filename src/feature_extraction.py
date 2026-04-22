@@ -401,6 +401,101 @@ class BehavioralFeatureExtractor:
 
         return features, num_questions
 
+    # ------------------------------------------------------------------
+    # Action-level features (true per-event sequence, not aggregates)
+    # ------------------------------------------------------------------
+    action_feature_names = [
+        'dt_since_prev',              # raw gap (clipped) in seconds
+        'dt_log',                     # log(1 + dt) — compresses outliers
+        'dt_z_within_session',        # z-score of gap within this session
+        'answer_change_flag',         # 1 if this action changes the answer, else 0
+        'same_question_as_prev',      # 1 if this action is on the same item as the previous action
+        'question_idx_norm',          # 0..1 position of this question among unique questions
+        'action_position_norm',       # 0..1 position of this action within the session's action list
+        'actions_on_q_so_far',        # count of prior actions on the same question (growing)
+        'cumulative_elapsed_norm',    # (timestamp - session_start) / session_duration, 0..1
+        'is_pause',                   # 1 if gap > 30s, 0 otherwise
+    ]
+
+    def extract_action_level_features(self, session: pd.DataFrame
+                                      ) -> Tuple[np.ndarray, int]:
+        """Return per-action feature tensor (one row per raw event).
+
+        Unlike extract_question_level_features, this does NOT aggregate
+        per question — each row of the session becomes one timestep.
+        This gives the sequence model the finest-grained temporal signal
+        available and matches the critique that per-question aggregates
+        hide action-level drift.
+        """
+        NUM_FEATURES = len(self.action_feature_names)
+        session = session.sort_values('timestamp_sec').reset_index(drop=True)
+        n = len(session)
+        if n == 0:
+            return np.zeros((1, NUM_FEATURES)), 1
+
+        # --- precompute session-level references ---
+        ts = session['timestamp_sec'].values.astype(float)
+        gaps = np.diff(ts, prepend=ts[0])  # first gap = 0
+        gaps = np.clip(gaps, 0, 600)
+        gap_mean = gaps.mean() if gaps.size else 0.0
+        gap_std = gaps.std() if gaps.std() > 0 else 1.0
+        session_duration = max(ts[-1] - ts[0], 1e-3)
+
+        unique_items = list(dict.fromkeys(session['item_id'].tolist()))
+        item_to_idx = {q: i for i, q in enumerate(unique_items)}
+        num_q = max(len(unique_items), 1)
+
+        answers = session['user_answer'].values if 'user_answer' in session.columns else [None] * n
+
+        features = np.zeros((n, NUM_FEATURES), dtype=float)
+        q_action_counter: dict = {}
+        prev_item = None
+        prev_answer_for_item: dict = {}
+
+        for i in range(n):
+            item = session['item_id'].iloc[i]
+            dt = gaps[i]
+            features[i, 0] = dt
+            features[i, 1] = np.log1p(dt)
+            features[i, 2] = (dt - gap_mean) / gap_std
+            # answer change flag: different from the last answer on the same item
+            ans = answers[i] if i < len(answers) else None
+            prev_ans = prev_answer_for_item.get(item)
+            features[i, 3] = 1.0 if (prev_ans is not None and ans is not None and ans != prev_ans) else 0.0
+            if ans is not None:
+                prev_answer_for_item[item] = ans
+            features[i, 4] = 1.0 if (prev_item is not None and item == prev_item) else 0.0
+            features[i, 5] = item_to_idx[item] / max(num_q - 1, 1)
+            features[i, 6] = i / max(n - 1, 1)
+            q_action_counter[item] = q_action_counter.get(item, 0) + 1
+            features[i, 7] = q_action_counter[item] - 1  # actions on this q BEFORE current
+            features[i, 8] = (ts[i] - ts[0]) / session_duration
+            features[i, 9] = 1.0 if dt > 30 else 0.0
+            prev_item = item
+
+        return features, n
+
+    def extract_action_features_batch(self, sessions: List[pd.DataFrame],
+                                      max_seq_len: int = 100
+                                      ) -> Tuple[np.ndarray, np.ndarray]:
+        """Batch extractor for action-level features (N, max_seq_len, 10)."""
+        num_f = len(self.action_feature_names)
+        all_feats, all_lens = [], []
+        for session in tqdm(sessions, desc="Extracting action-level features"):
+            feats, length = self.extract_action_level_features(session)
+            if length > max_seq_len:
+                feats = feats[:max_seq_len]
+                length = max_seq_len
+            padded = np.zeros((max_seq_len, num_f))
+            padded[:length] = feats
+            all_feats.append(padded)
+            all_lens.append(length)
+        X = np.array(all_feats)
+        L = np.array(all_lens)
+        print(f"Extracted action-level features: {X.shape}, "
+              f"lengths range [{L.min()}-{L.max()}]")
+        return X, L
+
     def extract_question_features_batch(self, sessions: List[pd.DataFrame],
                                         max_seq_len: int = 50) -> Tuple[np.ndarray, np.ndarray]:
         """
