@@ -2,10 +2,8 @@
 EdNet-KT2/
 archive/
 
-# Processed data and model artifacts
+# Processed data (keep raw results/models)
 data/processed/
-results/models/
-results/plots/
 
 # Python
 __pycache__/
