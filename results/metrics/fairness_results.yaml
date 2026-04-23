@@ -1,5 +1,5 @@
 after_calibration:
-  age_band: &id003
+  age_band:
     demographic_parity:
       fair: &id002 !!python/object/apply:numpy._core.multiarray.scalar
       - !!python/object/apply:numpy.dtype
@@ -35,40 +35,40 @@ after_calibration:
           - -1
           - 0
         - !!binary |
-          abGZl0S96j8=
+          AAAAAAAA8D8=
         Under 35: !!python/object/apply:numpy._core.multiarray.scalar
         - *id001
         - !!binary |
-          yMMuuMlu6j8=
+          AAAAAAAA8D8=
       ratio: !!python/object/apply:numpy._core.multiarray.scalar
       - *id001
       - !!binary |
-        bPBodxSi7z8=
+        AAAAAAAA8D8=
     equalized_odds:
       fair: *id002
       max_difference: !!python/object/apply:numpy._core.multiarray.scalar
       - *id001
       - !!binary |
-        GE2ncYRXsD8=
+        AAAAAAAAAAA=
       rates:
         35+:
           fpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            11I7j4wn6j8=
+            AAAAAAAA8D8=
           tpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            bY2/m0eo7j8=
+            AAAAAAAA8D8=
         Under 35:
           fpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            7HVgX+gQ6j8=
+            AAAAAAAA8D8=
           tpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            yqOKDVed7D8=
+            AAAAAAAA8D8=
   disability:
     demographic_parity:
       fair: *id002
@@ -76,40 +76,40 @@ after_calibration:
         N: !!python/object/apply:numpy._core.multiarray.scalar
         - *id001
         - !!binary |
-          k1o7uMSS6j8=
+          AAAAAAAA8D8=
         Y: !!python/object/apply:numpy._core.multiarray.scalar
         - *id001
         - !!binary |
-          JE2pOPvw6T8=
+          AAAAAAAA8D8=
       ratio: !!python/object/apply:numpy._core.multiarray.scalar
       - *id001
       - !!binary |
-        +OPRZiw97z8=
+        AAAAAAAA8D8=
     equalized_odds:
       fair: *id002
       max_difference: !!python/object/apply:numpy._core.multiarray.scalar
       - *id001
       - !!binary |
-        ABLiBlsbnD8=
+        AAAAAAAAAAA=
       rates:
         N:
           fpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            KYb6yxEp6j8=
+            AAAAAAAA8D8=
           tpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            6CWzY0AU7T8=
+            AAAAAAAA8D8=
         Y:
           fpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            Xonalahd6T8=
+            AAAAAAAA8D8=
           tpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            eDbqOxv17T8=
+            AAAAAAAA8D8=
   gender:
     demographic_parity:
       fair: *id002
@@ -117,40 +117,40 @@ after_calibration:
         F: !!python/object/apply:numpy._core.multiarray.scalar
         - *id001
         - !!binary |
-          Dn9WTWz36j8=
+          AAAAAAAA8D8=
         M: !!python/object/apply:numpy._core.multiarray.scalar
         - *id001
         - !!binary |
-          g/oe9moh6j8=
+          AAAAAAAA8D8=
       ratio: !!python/object/apply:numpy._core.multiarray.scalar
       - *id001
       - !!binary |
-        qgP7jQwC7z8=
+        AAAAAAAA8D8=
     equalized_odds:
       fair: *id002
       max_difference: !!python/object/apply:numpy._core.multiarray.scalar
       - *id001
       - !!binary |
-        YNOuOrNGnT8=
+        AAAAAAAAAAA=
       rates:
         F:
           fpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            EXGqhiqU6j8=
+            AAAAAAAA8D8=
           tpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            532KS4Zg7T8=
+            AAAAAAAA8D8=
         M:
           fpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            dvrU7PSp6T8=
+            AAAAAAAA8D8=
           tpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            kc+6wRT57D8=
+            AAAAAAAA8D8=
   imd_band:
     demographic_parity:
       fair: *id002
@@ -158,68 +158,108 @@ after_calibration:
         High: !!python/object/apply:numpy._core.multiarray.scalar
         - *id001
         - !!binary |
-          DwtUGOyb6j8=
+          AAAAAAAA8D8=
         Low: !!python/object/apply:numpy._core.multiarray.scalar
         - *id001
         - !!binary |
-          5Jo5rpnj6j8=
+          AAAAAAAA8D8=
         Medium: !!python/object/apply:numpy._core.multiarray.scalar
         - *id001
         - !!binary |
-          Ca/XtNIm6j8=
+          AAAAAAAA8D8=
         Unknown: !!python/object/apply:numpy._core.multiarray.scalar
         - *id001
         - !!binary |
-          3t3d3d3d6T8=
+          AAAAAAAA8D8=
       ratio: !!python/object/apply:numpy._core.multiarray.scalar
       - *id001
       - !!binary |
-        5zNEcYTI7j8=
+        AAAAAAAA8D8=
     equalized_odds:
       fair: *id002
       max_difference: !!python/object/apply:numpy._core.multiarray.scalar
       - *id001
       - !!binary |
-        cDbd+PfWsT8=
+        AAAAAAAAAAA=
       rates:
         High:
           fpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            oxZz/Vck6j8=
+            AAAAAAAA8D8=
           tpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            qV2J2pWo7T8=
+            AAAAAAAA8D8=
         Low:
           fpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            Yid2Yid26j8=
+            AAAAAAAA8D8=
           tpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            5qVE8Eh/7T8=
+            AAAAAAAA8D8=
         Medium:
           fpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            8C9PWJ+96T8=
+            AAAAAAAA8D8=
           tpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            JUmSJEmS7D8=
+            AAAAAAAA8D8=
         Unknown:
           fpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            YbyVfQ6p6T8=
+            AAAAAAAA8D8=
           tpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            27Zt27Zt6z8=
+            AAAAAAAA8D8=
 before_calibration:
-  age_band: *id003
+  age_band:
+    demographic_parity:
+      fair: *id002
+      positive_rates:
+        35+: !!python/object/apply:numpy._core.multiarray.scalar
+        - *id001
+        - !!binary |
+          3XJa5xH/wz8=
+        Under 35: !!python/object/apply:numpy._core.multiarray.scalar
+        - *id001
+        - !!binary |
+          yTiEGavUxD8=
+      ratio: !!python/object/apply:numpy._core.multiarray.scalar
+      - *id001
+      - !!binary |
+        6eKlNd+37j8=
+    equalized_odds:
+      fair: *id002
+      max_difference: !!python/object/apply:numpy._core.multiarray.scalar
+      - *id001
+      - !!binary |
+        QH/9ePujgT8=
+      rates:
+        35+:
+          fpr: !!python/object/apply:numpy._core.multiarray.scalar
+          - *id001
+          - !!binary |
+            dj0TpNMMqD8=
+          tpr: !!python/object/apply:numpy._core.multiarray.scalar
+          - *id001
+          - !!binary |
+            ziNUn2lr7D8=
+        Under 35:
+          fpr: !!python/object/apply:numpy._core.multiarray.scalar
+          - *id001
+          - !!binary |
+            3F3bfMAopD8=
+          tpr: !!python/object/apply:numpy._core.multiarray.scalar
+          - *id001
+          - !!binary |
+            yxk4jfmx7D8=
   disability:
     demographic_parity:
       fair: *id002
@@ -227,40 +267,40 @@ before_calibration:
         N: !!python/object/apply:numpy._core.multiarray.scalar
         - *id001
         - !!binary |
-          lxoOQHiX6j8=
+          05SOp0PTxD8=
         Y: !!python/object/apply:numpy._core.multiarray.scalar
         - *id001
         - !!binary |
-          QmDl0CLb6T8=
+          O99PjZduwj8=
       ratio: !!python/object/apply:numpy._core.multiarray.scalar
       - *id001
       - !!binary |
-        /3rKuVwd7z8=
+        jyvs9ZFS7D8=
     equalized_odds:
       fair: *id002
       max_difference: !!python/object/apply:numpy._core.multiarray.scalar
       - *id001
       - !!binary |
-        QJ2505k7nT8=
+        qBa+8Wijdj8=
       rates:
         N:
           fpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            L7rooosu6j8=
+            kNXsSb6PpT8=
           tpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            6CWzY0AU7T8=
+            UFkkYu+f7D8=
         Y:
           fpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            Re1K1K5E6T8=
+            uxK1K1G7oj8=
           tpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            eDbqOxv17T8=
+            cgUxuYKY7D8=
   gender:
     demographic_parity:
       fair: *id002
@@ -268,36 +308,36 @@ before_calibration:
         F: !!python/object/apply:numpy._core.multiarray.scalar
         - *id001
         - !!binary |
-          3NZ6E7oA6z8=
+          nBKAbyFaxD8=
         M: !!python/object/apply:numpy._core.multiarray.scalar
         - *id001
         - !!binary |
-          ZSKC14Md6j8=
+          KYGvG2/LxD8=
       ratio: !!python/object/apply:numpy._core.multiarray.scalar
       - *id001
       - !!binary |
-        ILlSfb3y7j8=
+        MloWcKRR7z8=
     equalized_odds:
       fair: *id002
       max_difference: !!python/object/apply:numpy._core.multiarray.scalar
       - *id001
       - !!binary |
-        QAE1qLMxnz8=
+        QCBzuQ3XmD8=
       rates:
         F:
           fpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            mAe/ZPee6j8=
+            6cLRGSPwpT8=
           tpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            532KS4Zg7T8=
+            jzbvU1wy7D8=
         M:
           fpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            jl99x2ml6T8=
+            hcKyX9q6pD8=
           tpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
@@ -309,62 +349,62 @@ before_calibration:
         High: !!python/object/apply:numpy._core.multiarray.scalar
         - *id001
         - !!binary |
-          J/fvUna26j8=
+          oMJg39RRxD8=
         Low: !!python/object/apply:numpy._core.multiarray.scalar
         - *id001
         - !!binary |
-          EXsLsbcQ6z8=
+          8xQoT4HyxD8=
         Medium: !!python/object/apply:numpy._core.multiarray.scalar
         - *id001
         - !!binary |
-          Ca/XtNIm6j8=
+          WJAWyOanxD8=
         Unknown: !!python/object/apply:numpy._core.multiarray.scalar
         - *id001
         - !!binary |
-          AAAAAAAA6D8=
+          IiIiIiIiwj8=
       ratio: !!python/object/apply:numpy._core.multiarray.scalar
       - *id001
       - !!binary |
-        75zfVzVg7D8=
+        OIdzOIez6z8=
     equalized_odds:
       fair: *id002
       max_difference: !!python/object/apply:numpy._core.multiarray.scalar
       - *id001
       - !!binary |
-        AHxtxLr0uD8=
+        qDzEXGgVuD8=
       rates:
         High:
           fpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            u11eSL846j8=
+            aqaSPNYgoz8=
           tpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            6/2y3i/r7T8=
+            cD4G52Nw7j8=
         Low:
           fpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            q6qqqqqq6j8=
+            mY3ZmI3ZqD8=
           tpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            5qVE8Eh/7T8=
+            i2Xjm6G16z8=
         Medium:
           fpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            8C9PWJ+96T8=
+            q8Jj0pxooz8=
           tpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            JUmSJEmS7D8=
+            27Zt27Zt7D8=
         Unknown:
           fpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |
-            K/scUhOM5z8=
+            8lb2OaQmqD8=
           tpr: !!python/object/apply:numpy._core.multiarray.scalar
           - *id001
           - !!binary |

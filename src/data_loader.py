@@ -29,16 +29,21 @@ class EdNetDataLoader:
             return None
     
     def load_batch(self, start_idx: int = 0, batch_size: int = 1000) -> List[pd.DataFrame]:
-        """Load a batch of student files."""
+        """Load a batch of student files using parallel I/O."""
+        import concurrent.futures
+        
         end_idx = min(start_idx + batch_size, len(self.student_files))
         batch_files = self.student_files[start_idx:end_idx]
         
-        students_data = []
-        for file in tqdm(batch_files, desc="Loading students"):
-            df = self.load_student(file)
-            if df is not None and len(df) > 0:
-                students_data.append(df)
+        # Parallel I/O — overlaps OneDrive latency across files
+        n_workers = min(8, len(batch_files))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as executor:
+            results = list(tqdm(
+                executor.map(self.load_student, batch_files),
+                total=len(batch_files), desc="Loading students"
+            ))
         
+        students_data = [df for df in results if df is not None and len(df) > 0]
         return students_data
     
     def load_all(self, max_students: int = None) -> List[pd.DataFrame]:

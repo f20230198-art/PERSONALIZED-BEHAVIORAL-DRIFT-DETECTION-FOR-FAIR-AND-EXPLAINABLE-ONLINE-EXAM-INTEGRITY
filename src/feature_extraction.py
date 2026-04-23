@@ -232,17 +232,23 @@ class BehavioralFeatureExtractor:
     
     def extract_features_batch(self, sessions: List[pd.DataFrame]) -> Tuple[np.ndarray, List[Dict]]:
         """
-        Extract features from a batch of sessions.
+        Extract features from a batch of sessions using multiprocessing.
         
         Returns:
             feature_matrix: (n_sessions, n_features) array
             feature_dicts: List of feature dictionaries for each session
         """
-        feature_dicts = []
-        
-        for session in tqdm(sessions, desc="Extracting features"):
-            features = self.extract_features(session)
-            feature_dicts.append(features)
+        import concurrent.futures
+        import os
+
+        n_workers = min(os.cpu_count() or 4, 8)  # cap at 8 to avoid memory pressure
+        print(f"  Extracting session-level features with {n_workers} workers...")
+
+        with concurrent.futures.ProcessPoolExecutor(max_workers=n_workers) as executor:
+            feature_dicts = list(tqdm(
+                executor.map(self.extract_features, sessions, chunksize=64),
+                total=len(sessions), desc="Extracting features"
+            ))
         
         # Convert to matrix
         feature_matrix = np.array([[f[name] for name in self.feature_names] 
@@ -478,18 +484,32 @@ class BehavioralFeatureExtractor:
     def extract_action_features_batch(self, sessions: List[pd.DataFrame],
                                       max_seq_len: int = 100
                                       ) -> Tuple[np.ndarray, np.ndarray]:
-        """Batch extractor for action-level features (N, max_seq_len, 10)."""
+        """Batch extractor for action-level features (N, max_seq_len, 10).
+        Uses threading for parallelism (pandas/numpy release the GIL)."""
+        import concurrent.futures
+        import os
+
         num_f = len(self.action_feature_names)
-        all_feats, all_lens = [], []
-        for session in tqdm(sessions, desc="Extracting action-level features"):
+        n_workers = min(os.cpu_count() or 4, 8)
+        print(f"  Extracting action-level features with {n_workers} threads...")
+
+        def _process_session(session):
             feats, length = self.extract_action_level_features(session)
             if length > max_seq_len:
                 feats = feats[:max_seq_len]
                 length = max_seq_len
             padded = np.zeros((max_seq_len, num_f))
             padded[:length] = feats
-            all_feats.append(padded)
-            all_lens.append(length)
+            return padded, length
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as executor:
+            results = list(tqdm(
+                executor.map(_process_session, sessions),
+                total=len(sessions), desc="Extracting action-level features"
+            ))
+
+        all_feats = [r[0] for r in results]
+        all_lens = [r[1] for r in results]
         X = np.array(all_feats)
         L = np.array(all_lens)
         print(f"Extracted action-level features: {X.shape}, "
@@ -500,27 +520,36 @@ class BehavioralFeatureExtractor:
                                         max_seq_len: int = 50) -> Tuple[np.ndarray, np.ndarray]:
         """
         Extract question-level features for all sessions, padded to max_seq_len.
+        Uses threading for parallelism (pandas/numpy release the GIL).
 
         Returns:
-            all_features: (N, max_seq_len, 6) padded array
+            all_features: (N, max_seq_len, 10) padded array
             all_lengths:  (N,) actual sequence lengths
         """
-        all_features = []
-        all_lengths = []
+        import concurrent.futures
+        import os
 
         num_q_features = len(self.question_feature_names)
-        for session in tqdm(sessions, desc="Extracting question-level features"):
+        n_workers = min(os.cpu_count() or 4, 8)
+        print(f"  Extracting question-level features with {n_workers} threads...")
+
+        def _process_session(session):
             feats, length = self.extract_question_level_features(session)
             if length > max_seq_len:
                 feats = feats[:max_seq_len]
                 length = max_seq_len
             padded = np.zeros((max_seq_len, num_q_features))
             padded[:length] = feats
-            all_features.append(padded)
-            all_lengths.append(length)
+            return padded, length
 
-        all_features = np.array(all_features)
-        all_lengths = np.array(all_lengths)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as executor:
+            results = list(tqdm(
+                executor.map(_process_session, sessions),
+                total=len(sessions), desc="Extracting question-level features"
+            ))
+
+        all_features = np.array([r[0] for r in results])
+        all_lengths = np.array([r[1] for r in results])
         print(f"Extracted question-level features: {all_features.shape}, "
               f"lengths range [{all_lengths.min()}-{all_lengths.max()}]")
         return all_features, all_lengths

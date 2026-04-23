@@ -24,6 +24,8 @@ class Trainer:
         self.config = config
         self.device = device
         self.gradient_clip = config['training'].get('gradient_clip', 1.0)
+        self.use_amp = (device.type == 'cuda')
+        self.scaler = torch.amp.GradScaler('cuda', enabled=self.use_amp)
 
         # Optimizer (model + discriminator params if present)
         params = list(self.model.parameters())
@@ -85,28 +87,31 @@ class Trainer:
         rev_lambda = self._get_reversal_lambda(epoch)
 
         for batch in train_loader:
-            X = batch[0].to(self.device)
-            lengths = batch[1].to(self.device) if len(batch) > 1 else None
-            demo_labels = batch[2].to(self.device) if len(batch) > 2 else None
+            X = batch[0].to(self.device, non_blocking=True)
+            lengths = batch[1].to(self.device, non_blocking=True) if len(batch) > 1 else None
+            demo_labels = batch[2].to(self.device, non_blocking=True) if len(batch) > 2 else None
 
-            reconstruction, latent = self.model(X, lengths)
-            if getattr(self.model, 'is_vae', False) and hasattr(self.model, 'vae_loss'):
-                recon_loss = self.model.vae_loss(reconstruction, X, lengths)
-            else:
-                recon_loss = self._masked_mse(reconstruction, X, lengths)
+            with torch.amp.autocast('cuda', enabled=self.use_amp):
+                reconstruction, latent = self.model(X, lengths)
+                if getattr(self.model, 'is_vae', False) and hasattr(self.model, 'vae_loss'):
+                    recon_loss = self.model.vae_loss(reconstruction, X, lengths)
+                else:
+                    recon_loss = self._masked_mse(reconstruction, X, lengths)
 
-            # Adversarial fairness loss
-            adv_loss = torch.tensor(0.0, device=self.device)
-            if self.discriminator is not None and demo_labels is not None and rev_lambda > 0:
-                demo_pred = self.discriminator(latent, reversal_lambda=rev_lambda)
-                adv_loss = self.adv_loss_fn(demo_pred, demo_labels)
+                # Adversarial fairness loss
+                adv_loss = torch.tensor(0.0, device=self.device)
+                if self.discriminator is not None and demo_labels is not None and rev_lambda > 0:
+                    demo_pred = self.discriminator(latent, reversal_lambda=rev_lambda)
+                    adv_loss = self.adv_loss_fn(demo_pred, demo_labels)
 
-            loss = recon_loss + rev_lambda * adv_loss
+                loss = recon_loss + rev_lambda * adv_loss
 
             self.optimizer.zero_grad()
-            loss.backward()
+            self.scaler.scale(loss).backward()
+            self.scaler.unscale_(self.optimizer)
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip)
-            self.optimizer.step()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
 
             total_loss += recon_loss.item()
 
@@ -119,14 +124,15 @@ class Trainer:
 
         with torch.no_grad():
             for batch in val_loader:
-                X = batch[0].to(self.device)
-                lengths = batch[1].to(self.device) if len(batch) > 1 else None
+                X = batch[0].to(self.device, non_blocking=True)
+                lengths = batch[1].to(self.device, non_blocking=True) if len(batch) > 1 else None
 
-                reconstruction, _ = self.model(X, lengths)
-                if getattr(self.model, 'is_vae', False) and hasattr(self.model, 'vae_loss'):
-                    loss = self.model.vae_loss(reconstruction, X, lengths)
-                else:
-                    loss = self._masked_mse(reconstruction, X, lengths)
+                with torch.amp.autocast('cuda', enabled=self.use_amp):
+                    reconstruction, _ = self.model(X, lengths)
+                    if getattr(self.model, 'is_vae', False) and hasattr(self.model, 'vae_loss'):
+                        loss = self.model.vae_loss(reconstruction, X, lengths)
+                    else:
+                        loss = self._masked_mse(reconstruction, X, lengths)
                 total_loss += loss.item()
 
         return total_loss / len(val_loader)

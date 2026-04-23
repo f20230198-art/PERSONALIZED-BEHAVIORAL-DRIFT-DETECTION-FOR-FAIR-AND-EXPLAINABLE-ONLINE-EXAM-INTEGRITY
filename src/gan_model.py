@@ -138,6 +138,9 @@ class ConditionalGANTrainer:
     def __init__(self, cfg: GANConfig, device: torch.device):
         self.cfg = cfg
         self.device = device
+        self.use_amp = (device.type == 'cuda')
+        self.scaler_D = torch.amp.GradScaler('cuda', enabled=self.use_amp)
+        self.scaler_G = torch.amp.GradScaler('cuda', enabled=self.use_amp)
         self.G = ConditionalGenerator(cfg.noise_dim, cfg.n_features,
                                        cfg.max_seq_len, cfg.hidden_dim,
                                        cfg.n_classes).to(device)
@@ -166,49 +169,54 @@ class ConditionalGANTrainer:
         L_t = torch.LongTensor(lengths)
         ds = TensorDataset(X_t, y_t, L_t)
         loader = DataLoader(ds, batch_size=self.cfg.batch_size, shuffle=True,
-                            drop_last=True, pin_memory=True)
+                            drop_last=True, pin_memory=True,
+                            num_workers=2, persistent_workers=True)
 
         bce = nn.BCEWithLogitsLoss()
         history = {"d_loss": [], "g_loss": []}
         for epoch in range(self.cfg.epochs):
             d_losses, g_losses = [], []
             for x_real, lbl, lens in loader:
-                x_real = x_real.to(self.device)
-                lbl = lbl.to(self.device)
-                lens = lens.to(self.device)
+                x_real = x_real.to(self.device, non_blocking=True)
+                lbl = lbl.to(self.device, non_blocking=True)
+                lens = lens.to(self.device, non_blocking=True)
                 bsz = x_real.size(0)
 
                 # ----- Discriminator -----
                 for _ in range(self.cfg.d_updates_per_g):
                     self.opt_D.zero_grad()
-                    # Real
-                    d_real = self.D(x_real, lbl, lens)
-                    real_targets = torch.full((bsz,), 1 - self.cfg.label_smoothing,
-                                              device=self.device)
-                    loss_real = bce(d_real, real_targets)
-                    # Fake
-                    noise = torch.randn(bsz, self.cfg.noise_dim, device=self.device)
-                    fake_labels = torch.randint(0, self.cfg.n_classes, (bsz,),
-                                                 device=self.device)
-                    x_fake, fake_lens = self.G(noise, fake_labels)
-                    x_fake = self._apply_length_mask(x_fake, fake_lens)
-                    d_fake = self.D(x_fake.detach(), fake_labels, fake_lens)
-                    loss_fake = bce(d_fake, torch.zeros(bsz, device=self.device))
-                    d_loss = loss_real + loss_fake
-                    d_loss.backward()
-                    self.opt_D.step()
+                    with torch.amp.autocast('cuda', enabled=self.use_amp):
+                        # Real
+                        d_real = self.D(x_real, lbl, lens)
+                        real_targets = torch.full((bsz,), 1 - self.cfg.label_smoothing,
+                                                  device=self.device)
+                        loss_real = bce(d_real, real_targets)
+                        # Fake
+                        noise = torch.randn(bsz, self.cfg.noise_dim, device=self.device)
+                        fake_labels = torch.randint(0, self.cfg.n_classes, (bsz,),
+                                                     device=self.device)
+                        x_fake, fake_lens = self.G(noise, fake_labels)
+                        x_fake = self._apply_length_mask(x_fake, fake_lens)
+                        d_fake = self.D(x_fake.detach(), fake_labels, fake_lens)
+                        loss_fake = bce(d_fake, torch.zeros(bsz, device=self.device))
+                        d_loss = loss_real + loss_fake
+                    self.scaler_D.scale(d_loss).backward()
+                    self.scaler_D.step(self.opt_D)
+                    self.scaler_D.update()
 
                 # ----- Generator -----
                 self.opt_G.zero_grad()
-                noise = torch.randn(bsz, self.cfg.noise_dim, device=self.device)
-                gen_labels = torch.randint(0, self.cfg.n_classes, (bsz,),
-                                            device=self.device)
-                x_gen, gen_lens = self.G(noise, gen_labels)
-                x_gen = self._apply_length_mask(x_gen, gen_lens)
-                d_gen = self.D(x_gen, gen_labels, gen_lens)
-                g_loss = bce(d_gen, torch.ones(bsz, device=self.device))
-                g_loss.backward()
-                self.opt_G.step()
+                with torch.amp.autocast('cuda', enabled=self.use_amp):
+                    noise = torch.randn(bsz, self.cfg.noise_dim, device=self.device)
+                    gen_labels = torch.randint(0, self.cfg.n_classes, (bsz,),
+                                                device=self.device)
+                    x_gen, gen_lens = self.G(noise, gen_labels)
+                    x_gen = self._apply_length_mask(x_gen, gen_lens)
+                    d_gen = self.D(x_gen, gen_labels, gen_lens)
+                    g_loss = bce(d_gen, torch.ones(bsz, device=self.device))
+                self.scaler_G.scale(g_loss).backward()
+                self.scaler_G.step(self.opt_G)
+                self.scaler_G.update()
 
                 d_losses.append(d_loss.item())
                 g_losses.append(g_loss.item())

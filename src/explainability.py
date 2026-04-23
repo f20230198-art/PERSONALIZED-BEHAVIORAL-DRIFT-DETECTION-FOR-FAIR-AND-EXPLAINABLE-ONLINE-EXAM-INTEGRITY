@@ -320,13 +320,11 @@ class SequentialSHAPExplainer:
         return summaries
 
     def _make_predict_fn(self, base_seq: np.ndarray, base_lengths: np.ndarray):
-        """Return a function that maps summary features → reconstruction error.
+        """Return a function that maps summary features → anomaly score.
 
-        For each sample, we rebuild a synthetic sequence from the summary
-        statistics (mean broadcast to each timestep) and pass it through
-        the model.  This is an approximation, but it ensures the model
-        receives inputs of the correct shape and the SHAP values reflect
-        how shifting each feature's *distribution* affects error.
+        Supports two model types:
+        - Classifiers (PlainTransformerClassifier): returns logits → sigmoid
+        - Autoencoders (LSTMAutoencoder): returns (reconstruction, latent) → MSE
 
         NOTE: KernelSHAP can pass very large batches (thousands of rows)
         through this function.  We process in mini-batches on CPU to avoid
@@ -341,9 +339,13 @@ class SequentialSHAPExplainer:
         cpu_device = torch.device('cpu')
         cpu_model = self.model.cpu().eval()
 
+        # Detect model type: classifiers have a 'head' attribute and return
+        # a single tensor; autoencoders return a tuple (reconstruction, latent).
+        is_classifier = hasattr(cpu_model, 'head') and not hasattr(cpu_model, 'decoder')
+
         def predict_fn(summaries: np.ndarray) -> np.ndarray:
             N = summaries.shape[0]
-            all_errors = []
+            all_scores = []
 
             for start in range(0, N, BATCH_SIZE):
                 end = min(start + BATCH_SIZE, N)
@@ -355,15 +357,25 @@ class SequentialSHAPExplainer:
                 L_tensor = torch.LongTensor([med_len] * batch_size)
 
                 with torch.no_grad():
-                    reconstruction, _ = cpu_model(X_tensor, L_tensor)
-                    mask = torch.zeros(batch_size, T, 1)
-                    mask[:, :med_len, :] = 1.0
-                    diff_sq = (X_tensor - reconstruction) ** 2 * mask
-                    errors = diff_sq.sum(dim=(1, 2)) / (med_len * F)
+                    if is_classifier:
+                        # Classifier: forward returns logits → sigmoid for score
+                        logits = cpu_model(X_tensor, L_tensor)
+                        scores = torch.sigmoid(logits)
+                    else:
+                        # Autoencoder: forward returns (reconstruction, latent)
+                        output = cpu_model(X_tensor, L_tensor)
+                        if isinstance(output, tuple):
+                            reconstruction = output[0]
+                        else:
+                            reconstruction = output
+                        mask = torch.zeros(batch_size, T, 1)
+                        mask[:, :med_len, :] = 1.0
+                        diff_sq = (X_tensor - reconstruction) ** 2 * mask
+                        scores = diff_sq.sum(dim=(1, 2)) / (med_len * F)
 
-                all_errors.append(errors.numpy())
+                all_scores.append(scores.numpy())
 
-            return np.concatenate(all_errors)
+            return np.concatenate(all_scores)
 
         return predict_fn
 
@@ -394,15 +406,21 @@ class SequentialSHAPExplainer:
         print("Sequential SHAP explainer initialized")
 
     def explain_batch(self, X_seq: np.ndarray, lengths: np.ndarray,
-                      max_samples: int = 100) -> Tuple[np.ndarray, np.ndarray]:
+                      max_samples: int = 30) -> Tuple[np.ndarray, np.ndarray]:
         """Explain a batch; returns (shap_values, summary_features)."""
         if len(X_seq) > max_samples:
             idx = np.random.choice(len(X_seq), max_samples, replace=False)
             X_seq = X_seq[idx]
             lengths = lengths[idx]
         summaries = self._summarize(X_seq, lengths)
-        print(f"Computing sequential SHAP values for {len(summaries)} instances...")
-        shap_values = self.explainer.shap_values(summaries)
+        n_features = summaries.shape[1]
+        # nsamples controls perturbation count per sample. Default is 2*F+2048
+        # which is extremely slow. 2*F+50 gives reliable importance rankings
+        # at a fraction of the cost.
+        nsamples = 2 * n_features + 50
+        print(f"Computing sequential SHAP values for {len(summaries)} instances "
+              f"({nsamples} perturbations each)...")
+        shap_values = self.explainer.shap_values(summaries, nsamples=nsamples)
         return np.array(shap_values), summaries
 
     def get_feature_importance(self, shap_values: np.ndarray) -> Dict[str, float]:
@@ -462,18 +480,18 @@ def generate_explanation_report(explainer, X_test: np.ndarray,
 
     # 1. Explain batch of detected anomalies
     anomaly_indices = np.where(predictions == 1)[0]
-    if len(anomaly_indices) > 50:
-        anomaly_indices = np.random.choice(anomaly_indices, 50, replace=False)
+    if len(anomaly_indices) > 30:
+        anomaly_indices = np.random.choice(anomaly_indices, 30, replace=False)
 
     anomalies = X_test[anomaly_indices]
 
     if is_sequential:
         anom_lengths = lengths[anomaly_indices] if lengths is not None else None
         shap_values, summaries = explainer.explain_batch(
-            anomalies, anom_lengths, max_samples=50
+            anomalies, anom_lengths, max_samples=30
         )
     else:
-        shap_values = explainer.explain_batch(anomalies, max_samples=50)
+        shap_values = explainer.explain_batch(anomalies, max_samples=30)
         summaries = anomalies
 
     # 2. Global feature importance

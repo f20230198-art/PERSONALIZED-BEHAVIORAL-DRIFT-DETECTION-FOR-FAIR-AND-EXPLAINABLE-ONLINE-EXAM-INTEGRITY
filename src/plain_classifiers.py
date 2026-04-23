@@ -1,16 +1,13 @@
 """
-Plain LSTM and Transformer classifiers (supervised baselines).
+Plain supervised classifiers for behavioral drift detection.
 
-Ablation-study counterparts to the autoencoder models: same encoder
-backbone, but trained directly on synthetic binary labels with a
-classification head instead of an autoencoder reconstruction objective.
+Models:
+- PlainTransformerClassifier (proposed) — self-attention over exam sequences
+- PlainLSTMClassifier (baseline) — bidirectional LSTM over exam sequences
 
-IMPORTANT CAVEAT: these models use the synthetic labels during training.
-The autoencoders do not (they train on clean data only). Therefore these
-classifiers represent a *supervised upper bound* for what detection
-performance is achievable on this synthetic distribution — not an
-unsupervised detector. Reporting them is informative precisely because
-it shows how much signal the unsupervised AEs leave on the table.
+Both are trained on synthetic binary labels with a classification head
+and share the same forward(x, lengths) interface so ClassifierTrainer
+works for either.
 """
 
 from __future__ import annotations
@@ -25,51 +22,18 @@ from torch.utils.data import DataLoader, TensorDataset
 
 
 # ---------------------------------------------------------------------------
-# Models
+# Model
 # ---------------------------------------------------------------------------
 
 
-class PlainLSTMClassifier(nn.Module):
-    """Plain LSTM encoder + linear classification head.
+class PlainTransformerClassifier(nn.Module):
+    """Plain Transformer encoder + linear classification head.
 
-    No decoder, no reconstruction. Just: sequence -> last hidden -> logit.
+    This is the main proposed model. Uses self-attention to capture
+    dependencies between any two questions in the exam, regardless of
+    distance. Outputs a logit for binary anomaly classification.
     """
 
-    def __init__(self, input_dim: int = 10, hidden_dim: int = 96,
-                 num_layers: int = 2, dropout: float = 0.35):
-        super().__init__()
-        self.hidden_dim = hidden_dim
-        self.lstm = nn.LSTM(
-            input_size=input_dim, hidden_size=hidden_dim,
-            num_layers=num_layers, batch_first=True,
-            dropout=dropout if num_layers > 1 else 0,
-        )
-        self.head = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim // 2, 1),
-        )
-
-    def forward(self, x: torch.Tensor, lengths: Optional[torch.Tensor] = None
-                ) -> torch.Tensor:
-        if lengths is not None and lengths.min() > 0:
-            packed = nn.utils.rnn.pack_padded_sequence(
-                x, lengths.cpu().clamp(min=1), batch_first=True, enforce_sorted=False
-            )
-            out, _ = self.lstm(packed)
-            out, _ = nn.utils.rnn.pad_packed_sequence(out, batch_first=True)
-            idx = (lengths - 1).clamp(min=0).unsqueeze(1).unsqueeze(2)
-            idx = idx.expand(-1, 1, self.hidden_dim).to(x.device)
-            last = out.gather(1, idx).squeeze(1)
-        else:
-            out, _ = self.lstm(x)
-            last = out[:, -1, :]
-        return self.head(last).squeeze(1)  # logits (batch,)
-
-
-class PlainTransformerClassifier(nn.Module):
-    """Plain Transformer encoder + linear classification head."""
 
     def __init__(self, input_dim: int = 10, d_model: int = 96, nhead: int = 4,
                  num_layers: int = 2, max_seq_len: int = 100, dropout: float = 0.2):
@@ -107,6 +71,64 @@ class PlainTransformerClassifier(nn.Module):
         return self.head(pooled).squeeze(1)
 
 
+class PlainLSTMClassifier(nn.Module):
+    """Bidirectional LSTM encoder + linear classification head.
+
+    Supervised baseline that processes the exam sequence with a stacked
+    BiLSTM and applies masked mean-pooling before a 2-layer classification
+    head.  Same forward(x, lengths) interface as PlainTransformerClassifier
+    so ClassifierTrainer works for both.
+    """
+
+    def __init__(self, input_dim: int = 10, hidden_dim: int = 96,
+                 num_layers: int = 2, max_seq_len: int = 100,
+                 dropout: float = 0.2):
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
+
+        self.lstm = nn.LSTM(
+            input_size=input_dim,
+            hidden_size=hidden_dim,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=dropout if num_layers > 1 else 0.0,
+            bidirectional=True,
+        )
+        # BiLSTM output is 2 * hidden_dim
+        self.head = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, 1),
+        )
+
+    def forward(self, x: torch.Tensor, lengths: Optional[torch.Tensor] = None
+                ) -> torch.Tensor:
+        # Pack padded sequences for efficient LSTM processing
+        batch, seq_len, _ = x.shape
+        if lengths is not None:
+            # Clamp lengths to valid range
+            lengths_cpu = lengths.cpu().clamp(min=1, max=seq_len)
+            packed = nn.utils.rnn.pack_padded_sequence(
+                x, lengths_cpu, batch_first=True, enforce_sorted=False
+            )
+            output, _ = self.lstm(packed)
+            output, _ = nn.utils.rnn.pad_packed_sequence(
+                output, batch_first=True, total_length=seq_len
+            )
+            # Masked mean pooling over valid timesteps
+            pad_mask = (torch.arange(seq_len, device=x.device).unsqueeze(0)
+                        < lengths.unsqueeze(1))  # (B, T)
+            valid = pad_mask.unsqueeze(2).float()  # (B, T, 1)
+            pooled = (output * valid).sum(1) / lengths.unsqueeze(1).float().clamp(min=1)
+        else:
+            output, _ = self.lstm(x)
+            pooled = output.mean(1)
+
+        return self.head(pooled).squeeze(1)
+
+
 # ---------------------------------------------------------------------------
 # Trainer (separate from Trainer in src.train since that one is for AEs)
 # ---------------------------------------------------------------------------
@@ -119,6 +141,8 @@ class ClassifierTrainer:
         self.model = model.to(device)
         self.device = device
         self.gradient_clip = gradient_clip
+        self.use_amp = (device.type == 'cuda')  # Mixed precision on GPU
+        self.scaler = torch.amp.GradScaler('cuda', enabled=self.use_amp)
         self.optimizer = torch.optim.Adam(
             self.model.parameters(), lr=lr, weight_decay=weight_decay
         )
@@ -132,14 +156,19 @@ class ClassifierTrainer:
             self.loss_fn = nn.BCEWithLogitsLoss()
 
     def _run_batch(self, x, y, lens, train: bool):
-        x = x.to(self.device); y = y.to(self.device); lens = lens.to(self.device)
-        logits = self.model(x, lens)
-        loss = self.loss_fn(logits, y.float())
+        x = x.to(self.device, non_blocking=True)
+        y = y.to(self.device, non_blocking=True)
+        lens = lens.to(self.device, non_blocking=True)
+        with torch.amp.autocast('cuda', enabled=self.use_amp):
+            logits = self.model(x, lens)
+            loss = self.loss_fn(logits, y.float())
         if train:
             self.optimizer.zero_grad()
-            loss.backward()
+            self.scaler.scale(loss).backward()
+            self.scaler.unscale_(self.optimizer)
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip)
-            self.optimizer.step()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
         return loss.item()
 
     def train(self, X_train, y_train, L_train, X_val, y_val, L_val,
@@ -153,8 +182,10 @@ class ClassifierTrainer:
             torch.FloatTensor(X_val), torch.FloatTensor(y_val),
             torch.LongTensor(L_val)
         )
-        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, pin_memory=True)
-        val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, pin_memory=True)
+        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
+                                  pin_memory=True, num_workers=2, persistent_workers=True)
+        val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
+                                pin_memory=True, num_workers=2, persistent_workers=True)
 
         best_val = float('inf'); bad = 0
         history = {"train_loss": [], "val_loss": []}

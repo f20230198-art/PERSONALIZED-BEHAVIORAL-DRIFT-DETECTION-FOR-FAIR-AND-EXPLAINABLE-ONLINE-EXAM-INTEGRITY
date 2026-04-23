@@ -51,55 +51,21 @@ model:
   bidirectional: false
   max_seq_len: 50
 
-# Model: Transformer Autoencoder (alternative sequence model)
-transformer:
-  name: "TransformerAutoencoder"
-  input_dim: 10
-  d_model: 96       # matched to LSTM hidden_dim for fair comparison
-  nhead: 4          # 96/4 = 24 per head
-  num_layers: 2
-  latent_dim: 32    # matched to LSTM latent_dim
-  max_seq_len: 50
-  dropout: 0.2
-
-# LSTM VAE (variational version of LSTM autoencoder)
-lstm_vae:
-  name: "LSTMVAE"
-  input_dim: 10
-  hidden_dim: 96
-  latent_dim: 32
-  num_layers: 2
-  dropout: 0.2      # reverted from 0.35 for consistency with LSTM-AE fix
-  kl_beta: 0.05
-
-# Transformer VAE (variational version of Transformer autoencoder)
-transformer_vae:
-  name: "TransformerVAE"
-  input_dim: 10
-  d_model: 96
-  nhead: 4
-  num_layers: 2
-  latent_dim: 32
-  max_seq_len: 50
-  dropout: 0.2
-  kl_beta: 0.05       # KL weight — small so reconstruction stays sharp
-
-# Plain supervised classifiers (ablation baselines)
-# These train directly on synthetic labels — represents a supervised upper bound.
+# Plain Transformer Classifier (main proposed model — supervised)
 plain_classifiers:
   enabled: true
-  epochs: 30
+  epochs: 50         # more epochs for best results
   batch_size: 256
   learning_rate: 0.001
-  patience: 7
-  lstm:
-    hidden_dim: 96
-    num_layers: 2
-    dropout: 0.2
+  patience: 10
   transformer:
-    d_model: 96
-    nhead: 4
-    num_layers: 2
+    d_model: 128      # wider model for better representation
+    nhead: 4          # 128/4 = 32 per head
+    num_layers: 3     # deeper for better feature interaction
+    dropout: 0.2
+  lstm:
+    hidden_dim: 96    # match transformer capacity
+    num_layers: 2     # standard BiLSTM depth
     dropout: 0.2
 
 # Conditional GAN (used when data.synthetic_method == 'gan')

@@ -2,11 +2,12 @@
 Model implementations for behavioral drift detection.
 
 Models:
-- LSTM Autoencoder (main model)
+- LSTM Autoencoder (proposed unsupervised model)
 - Standard Autoencoder (baseline)
 - Isolation Forest (baseline)
 - One-Class SVM (baseline)
 - Rule-Based detector (baseline)
+- Plain Transformer Classifier (supervised — best performer, see plain_classifiers.py)
 """
 
 import torch
@@ -114,101 +115,6 @@ class LSTMAutoencoder(nn.Module):
             x: (batch, seq_len, input_dim) input sequences
             lengths: (batch,) optional actual sequence lengths
         """
-        seq_len = x.size(1)
-        latent = self.encode(x, lengths)
-        reconstruction = self.decode(latent, seq_len)
-        return reconstruction, latent
-
-
-class TransformerAutoencoder(nn.Module):
-    """
-    Transformer-based Autoencoder for sequential behavioral pattern learning.
-
-    Uses self-attention to capture dependencies between any two questions
-    in the exam, regardless of distance.  Compared to the LSTM-AE, this
-    model has no sequential inductive bias — temporal ordering is provided
-    solely by learnable positional encodings.
-
-    Architecture:
-    - Encoder: Linear projection + positional encoding + Transformer encoder
-               + masked mean pooling + linear bottleneck
-    - Decoder: Linear expansion + positional encoding + Transformer decoder
-               + linear output projection
-    """
-
-    def __init__(self, input_dim: int = 6, d_model: int = 64, nhead: int = 4,
-                 num_layers: int = 2, latent_dim: int = 16,
-                 max_seq_len: int = 50, dropout: float = 0.2):
-        super(TransformerAutoencoder, self).__init__()
-
-        self.input_dim = input_dim
-        self.d_model = d_model
-        self.max_seq_len = max_seq_len
-
-        # Input projection
-        self.input_proj = nn.Linear(input_dim, d_model)
-
-        # Learnable positional encoding
-        self.pos_encoding = nn.Parameter(torch.randn(1, max_seq_len, d_model) * 0.02)
-
-        # Transformer encoder
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model, nhead=nhead,
-            dim_feedforward=d_model * 4,
-            dropout=dropout, batch_first=True
-        )
-        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-
-        # Bottleneck
-        self.to_latent = nn.Linear(d_model, latent_dim)
-        self.from_latent = nn.Linear(latent_dim, d_model)
-
-        # Transformer decoder
-        decoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_model, nhead=nhead,
-            dim_feedforward=d_model * 4,
-            dropout=dropout, batch_first=True
-        )
-        self.transformer_decoder = nn.TransformerEncoder(decoder_layer, num_layers=num_layers)
-
-        # Output projection
-        self.output_proj = nn.Linear(d_model, input_dim)
-
-    def encode(self, x, lengths=None):
-        """Encode input sequence to latent representation via self-attention."""
-        batch_size, seq_len, _ = x.shape
-        x = self.input_proj(x)
-        x = x + self.pos_encoding[:, :seq_len, :]
-
-        # Padding mask: True = ignore position (PyTorch convention)
-        if lengths is not None:
-            pad_mask = torch.arange(seq_len, device=x.device).unsqueeze(0) >= lengths.unsqueeze(1)
-        else:
-            pad_mask = None
-
-        encoded = self.transformer_encoder(x, src_key_padding_mask=pad_mask)
-
-        # Masked mean pooling over valid positions
-        if lengths is not None:
-            valid_mask = (~pad_mask).unsqueeze(2).float()  # (batch, seq, 1)
-            pooled = (encoded * valid_mask).sum(1) / lengths.unsqueeze(1).float().clamp(min=1)
-        else:
-            pooled = encoded.mean(1)
-
-        latent = self.to_latent(pooled)
-        return latent
-
-    def decode(self, latent, seq_len):
-        """Decode latent representation back to sequence."""
-        hidden = self.from_latent(latent)  # (batch, d_model)
-        hidden = hidden.unsqueeze(1).repeat(1, seq_len, 1)
-        hidden = hidden + self.pos_encoding[:, :seq_len, :]
-        decoded = self.transformer_decoder(hidden)
-        output = self.output_proj(decoded)
-        return output
-
-    def forward(self, x, lengths=None):
-        """Forward pass — same interface as LSTMAutoencoder."""
         seq_len = x.size(1)
         latent = self.encode(x, lengths)
         reconstruction = self.decode(latent, seq_len)
