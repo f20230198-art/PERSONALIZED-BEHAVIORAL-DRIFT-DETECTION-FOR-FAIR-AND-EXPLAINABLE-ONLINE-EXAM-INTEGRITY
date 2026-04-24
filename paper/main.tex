@@ -1,7 +1,7 @@
 % ============================================================
 % Personalized Behavioral Drift Detection for Fair and
 % Explainable Online Exam Integrity
-% ACM sigconf format (LAK 2026)
+% ACM sigconf format (LAK 2027)
 % ============================================================
 \documentclass[sigconf]{acmart}
 
@@ -15,12 +15,11 @@
 \graphicspath{{figures/}}
 
 % ---- ACM metadata ----
-% TODO: Update these fields before final submission
 \copyrightyear{2026}
 \acmYear{2026}
 \setcopyright{acmlicensed}
-\acmConference[LAK '27]{Proceedings of the 16th International Conference on Learning Analytics and Knowledge}{March 2027}{venue annanouced}
-\acmBooktitle{Proceedings of the 16th International Conference on Learning Analytics and Knowledge (LAK '27), March 2027 ,venue unanouced
+\acmConference[LAK '27]{Proceedings of the 17th International Conference on Learning Analytics and Knowledge}{March 2027}{venue announced}
+\acmBooktitle{Proceedings of the 17th International Conference on Learning Analytics and Knowledge (LAK '27), March 2027, venue unannounced}
 \acmDOI{10.1145/nnnnnnn.nnnnnnn}
 \acmISBN{978-x-xxxx-xxxx-x/26/03}
 
@@ -66,7 +65,7 @@
 % ABSTRACT
 % ============================================================
 \begin{abstract}
-Online examinations have now become the new normal for higher education institutions across the globe. However, the tools we use to ensure the integrity of these online examinations are still in the development stages. Most of the tools rely on intrusive webcam surveillance or the use of strict rule-based triggers that treat all students the same. These tools are based on the notion that all students have the same examination patterns, which is not the case. These tools are also based on the fact that some demographics are more prone to being flagged than others. In this paper, we propose a new framework for detecting cheating in online examinations. Instead of focusing on the student's appearance during the examination, we have developed a new method of modeling the student's typical behavior during the examination based on the student's clickstream data. The framework also utilizes fairness-aware threshold calibration to ensure that students from various demographic groups have approximately equal probabilities of being selected. Additionally, for each selected session, SHAP-based explanations are provided to determine the specific behavioral characteristics, such as excessive time spent on specific questions, which contributed to the flagged session. We compare our approach with Isolation Forest, One-Class SVM, and rule-based heuristic methods using the EdNet clickstream data with OULAD demographic data. The results show that our approach has better ROC-AUC and Precision-Recall AUC compared to all the baselines, while achieving approximate demographic parity. Further, the paper presents a Streamlit-based instructor dashboard to present the ranked anomaly scores, timelines, and feature-level explanations to facilitate fair and informed decision-making.
+Online examinations have become the new normal for higher education, but the integrity tools universities rely on are still immature: most are based on intrusive webcam surveillance or rigid rule-based triggers that treat every student the same and disproportionately penalise certain demographic groups. In this paper we propose a framework that, instead of watching students, models their own behavioural signature from low-level clickstream data. Our main proposed detector is a supervised Transformer classifier that operates on action-level behavioural sequences and answers the question ``does this session look like the way this population normally behaves?''. We also retain an LSTM autoencoder as a self-supervised alternative that learns what ``normal'' reconstruction looks like, so the framework supports both labelled and unlabelled deployment scenarios. Flagged sessions are then passed through a fairness-aware threshold-calibration stage operating across four demographic axes (gender, age band, IMD band, disability), and SHAP-based explanations decompose each flag into the specific questions and features that caused it. We evaluate on $\sim$15{,}000 students sampled from the EdNet-KT2 clickstream dataset, augmented with OULAD demographic profiles and GAN-enhanced synthetic anomalies grounded in the literature on cheating behaviour. The proposed Transformer achieves ROC-AUC $0.975$, PR-AUC $0.930$, F1 $0.832$ and precision@50 $= 1.00$, outperforming Isolation Forest, One-Class SVM, a standard feed-forward autoencoder, a rule-based baseline, the LSTM autoencoder, and a supervised BiLSTM classifier. After threshold calibration, all four demographic axes achieve DPR $= 1.00$ and EOD $= 0.00$ on the test split. A Streamlit prototype dashboard presents ranked anomaly scores, exam timelines, and SHAP-based explanations for instructor review.
 \end{abstract}
 
 % ---- CCS Concepts ----
@@ -101,7 +100,7 @@ Online examinations have now become the new normal for higher education institut
 \ccsdesc[500]{Applied computing~Education}
 
 % ---- Keywords ----
-\keywords{behavioral drift detection, online exam integrity, LSTM autoencoder, fairness in AI, explainable AI, anomaly detection, clickstream analysis, learning analytics}
+\keywords{behavioral drift detection, online exam integrity, Transformer, LSTM autoencoder, fairness in AI, explainable AI, anomaly detection, clickstream analysis, learning analytics}
 
 \maketitle
 
@@ -110,28 +109,29 @@ Online examinations have now become the new normal for higher education institut
 % ============================================================
 \section{Introduction}
 
-Remote examinations are, by now, a standard feature of higher education. The shift accelerated during the COVID-19 pandemic~\cite{coghlan2021good}, but it was already underway before 2020, and it shows no signs of reversing. The issue is simple: the traditional approach to invigilation doesn’t function when the student is sitting the exam at home rather than in a lecture theater. The universities have responded to this by using computerized invigilation systems, but the options available are, for the most part, disappointing.
+Remote examinations are, by now, a standard feature of higher education. The shift accelerated during the COVID-19 pandemic~\cite{coghlan2021good}, but it was already underway before 2020 and it shows no signs of reversing. The problem is straightforward: the traditional approach to invigilation does not function when the student is sitting the exam at home rather than in a lecture theatre. Universities have responded by adopting computerised invigilation systems, but the options available are, for the most part, disappointing.
 
-The most widely used commercial proctoring systems---ProctorU, ExamSoft, Respondus LockDown Browser---rely heavily on webcam feeds, screen recording, and audio capture~\cite{nigam2021systematic}. There are well-documented concerns around these tools. They set up an adversarial relationship between student and computer, with an overly surveilled test environment. They raise serious concerns about student privacy. They have been shown to produce higher false-positive rates for students of colour, students with disabilities, and students in non-standard testing conditions~\cite{swauger2020software}.And they're also very reactive, watching students rather than really understanding what they're doing.
+The most widely used commercial proctoring systems---ProctorU, ExamSoft, Respondus LockDown Browser---rely heavily on webcam feeds, screen recording, and audio capture~\cite{nigam2021systematic}. There are well-documented concerns around these tools. They set up an adversarial relationship between student and computer, with an overly surveilled test environment; they raise serious concerns about student privacy; they have been shown to produce higher false-positive rates for students of colour, students with disabilities, and students in non-standard testing conditions~\cite{swauger2020software}. And they are reactive, watching students rather than actually understanding what they are doing.
 
-On the research side, clickstream analytics has been used extensively to study student engagement, predict performance, and identify at-risk learners in learning management systems~\cite{gardner2019evaluating, aljohani2019predicting, brinton2015mooc}. This body of work is valuable, but it is largely focused on patterns at the course level over a period of weeks or months: how often a student logs in, how many posts they read in the forum, etc. Exam integrity monitoring is a different problem. This problem requires temporally fine-grained modeling at the question level within a single exam session.
+On the research side, clickstream analytics has been used extensively to study student engagement, predict performance, and identify at-risk learners in learning management systems~\cite{gardner2019evaluating, aljohani2019predicting, brinton2015mooc}. This body of work is valuable, but it is largely focused on patterns at the course level over weeks or months: how often a student logs in, how many posts they read in the forum, and so on. Exam integrity monitoring is a different problem. It requires temporally fine-grained modelling at the question level within a single exam session.
 
-A few studies have applied anomaly detection methods to cheating in MOOCs~\cite{ruiperez2017detection, alexandron2019fraud} and collusion in programming assignments~\cite{li2015detecting}. These methods generally rely on some sort of statistical baseline for the general population---they flag the student who's different from the crowd. The trouble with this is that students \textit{are} different from one another. Some people are naturally more deliberative, revisit the questions more often, or answer the questions out of sequence. We'll inevitably misclassify some honest students who are just very different from the average student if we're measuring everyone against the same average.
+A few studies have applied anomaly detection methods to cheating in MOOCs~\cite{ruiperez2017detection, alexandron2019fraud} and collusion in programming assignments~\cite{li2015detecting}. These methods generally rely on a statistical baseline of the general population---they flag the student who is different from the crowd. The difficulty is that students \textit{are} different from one another. Some are naturally more deliberative, revisit questions more often, or answer out of sequence. Any detector that measures everyone against the same average will inevitably misclassify honest students who simply deviate from the population mean.
 
-This paper proposes a framework built around a different idea: \textbf{personalized behavioral drift detection}. Instead of the question "Does this student look different from the rest of the students?" we ask "Does this student look different from themselves?" By learning the individual behavioral baseline for each student from their previous individual exams, we are able to identify actual anomalies while minimizing false alarms caused by individual variations. At the same time, we address two important issues that are often relegated to an afterthought in the literature on anomaly detection:
+This paper proposes a framework built around a different idea: \textbf{personalized behavioral drift detection}. Instead of the question ``does this student look different from other students?'', we ask ``does this session look like a normal behavioural sequence?'' --- and for students with enough history, ``does this session look different from this student themselves?''. The main proposed detector is a supervised Transformer classifier trained end-to-end on behavioural sequences with synthetic anomaly labels; we retain an LSTM autoencoder alongside it as a self-supervised alternative that learns what ``normal'' reconstruction looks like without needing any labels. At the same time, we address two issues that are often relegated to an afterthought in the literature on anomaly detection:
 
 \begin{enumerate}
-    \item \textbf{Fairness.} Anomaly detection systems can easily be designed to incorporate demographic biases. For instance, if students in certain groups tend to have higher values in the drift metrics due to differences in testing environments, access to devices, and cultural differences, a naive system will likely be unfair towards them. We incorporate fairness directly into the detection pipeline.
-    \item \textbf{Explainability.}An opaque score will not be useful to an instructor who needs to determine if they should investigate the flag. We also provide SHAP-based feature-level explanations for each flagged session, which tells the instructor \textit{which} behavioral features (e.g., answer change frequency, time per question) caused the flag.
+    \item \textbf{Fairness.} Anomaly detection systems can easily encode demographic biases. If students in certain groups tend to have higher values in the drift metrics because of differences in testing environments, access to devices, and cultural patterns, a naive system will be unfair towards them. We incorporate fairness directly into the detection pipeline through per-group threshold calibration.
+    \item \textbf{Explainability.} An opaque score is not useful to an instructor who needs to decide whether to investigate a flag. We provide SHAP-based feature-level explanations for each flagged session, indicating \textit{which} behavioural features (e.g., answer-change frequency, time per question) caused the flag.
 \end{enumerate}
 
 Concretely, our contributions are:
 \begin{itemize}
-    \item An LSTM autoencoder-based framework that can learn student behavioral representations from the historical data using a self-supervised mode without the need for any labeled cheating data.
-    \item A drift scoring mechanism that can measure the deviation of each student from their own baseline using z-score normalization.
-    \item A fairness post-processing calibration mechanism that can be measured based on the Demographic Parity Ratio and Equalized Odds Difference.
-    \item A SHAP-based explainability component that can provide question-level and feature-level attribution for each anomaly flag.
-    \item A prototype dashboard for the instructor that combines the anomaly score, the timeline of the exam, and the feature explanations.
+    \item A Transformer-based supervised detector that operates on action-level clickstream sequences and substantially outperforms isolation-based, boundary-based, feed-forward-AE, LSTM-AE, and BiLSTM baselines (ROC-AUC $0.975$, F1 $0.832$).
+    \item An LSTM autoencoder formulation of the same detection task, retained as a self-supervised alternative for settings where no anomaly labels are available.
+    \item A behavioural feature extractor that produces both aggregated session-level features (for classical baselines) and per-action question-level features (for sequence models).
+    \item A GAN-augmented synthetic-anomaly pipeline seeded by literature-grounded rule-based anomalies, used to create a realistic training signal in the absence of labelled cheating data.
+    \item A post-hoc fairness-aware threshold calibration mechanism that achieves DPR $\geq 0.80$ and EOD $\leq 0.10$ across gender, age band, IMD band, and disability status.
+    \item A SHAP-based explainability component that produces question-level and feature-level attributions for each flag, and a Streamlit prototype dashboard that combines anomaly scores, the exam timeline, and these explanations.
 \end{itemize}
 
 % ============================================================
@@ -140,22 +140,22 @@ Concretely, our contributions are:
 \section{Related Work}
 \label{sec:related}
 
-We organize prior work into five threads that, taken together, motivate the design of our framework.
+We organise prior work into five threads that, together, motivate the design of our framework.
 
 \subsection{Automated Online Proctoring}
-Commercial proctoring platforms have seen tremendous growth, and so has online education. Tools like ProctorU and Respondus LockDown Browser combine webcam-based face tracking, eye-gaze analysis, screen locking, and audio monitoring to flag potential misconduct~\cite{nigam2021systematic}. Though effective at preventing cheating, such platforms have faced intense scrutiny. Swauger~\cite{swauger2020software} documents how algorithmic proctoring disproportionately affects students with darker skin tones, physical disabilities, and atypical testing environments. Coghlan et al.~\cite{coghlan2021good} argue that these tools embody a problematic ``Big Brother'' model of surveillance that erodes trust between students and institutions. Our approach bypasses all of this altogether, using only anonymized clickstream data, not webcam or audio.
+Commercial proctoring platforms have grown alongside online education. Tools like ProctorU and Respondus LockDown Browser combine webcam-based face tracking, eye-gaze analysis, screen locking, and audio monitoring to flag potential misconduct~\cite{nigam2021systematic}. Though effective at deterrence, such platforms have faced intense scrutiny. Swauger~\cite{swauger2020software} documents how algorithmic proctoring disproportionately affects students with darker skin tones, physical disabilities, and atypical testing environments. Coghlan et al.~\cite{coghlan2021good} argue that these tools embody a problematic ``Big Brother'' model of surveillance that erodes trust between students and institutions. Our approach bypasses these modalities altogether, using only anonymised clickstream data.
 
-\subsection{Clickstream and Behavioral Analytics in Education}
-Clickstream analysis is one of the oldest techniques in educational data mining. Baker and Yacef~\cite{baker2010data} were early proponents of using interaction logs to detect off-task behavior in intelligent tutoring systems. More recently, the EdNet dataset~\cite{choi2020ednet}---one of the largest publicly available educational interaction datasets---includes detailed clickstream data from millions of student problem-solving sessions, covering answer changes, timestamps, and navigation patterns. Brinton and Chiang~\cite{brinton2015mooc} demonstrated that fine-grained clickstream features could predict student engagement and dropout in MOOCs. Aljohani et al.~\cite{aljohani2019predicting} applied similar ideas to virtual learning environments using OULAD~\cite{kuzilek2017oulad} clickstream data. Hussain et al.~\cite{hussain2018student} showed that student engagement metrics derived from interaction logs could be reliably clustered. These studies demonstrate the richness of the clickstream data as a source of behavioral information, but focus on course-level engagement patterns rather than in-exam behavioral anomalies.
+\subsection{Clickstream and Behavioural Analytics in Education}
+Clickstream analysis is one of the oldest techniques in educational data mining. Baker and Yacef~\cite{baker2010data} were early proponents of using interaction logs to detect off-task behaviour in intelligent tutoring systems. More recently, EdNet~\cite{choi2020ednet}---one of the largest publicly available educational interaction datasets---exposes detailed clickstream data from millions of problem-solving sessions, covering answer changes, timestamps, and navigation. Brinton and Chiang~\cite{brinton2015mooc} showed that fine-grained clickstream features could predict engagement and dropout in MOOCs; Aljohani et al.~\cite{aljohani2019predicting} applied similar ideas to virtual learning environments using OULAD~\cite{kuzilek2017oulad}. Hussain et al.~\cite{hussain2018student} clustered engagement metrics from interaction logs. These studies demonstrate the richness of clickstream data but focus on course-level engagement rather than in-exam behavioural anomalies.
 
 \subsection{Anomaly Detection for Academic Integrity}
-Several groups have worked on the topic of anomaly detection, specifically in the context of academic dishonesty. Ruiperez-Valiente et al.~\cite{ruiperez2017detection} applied statistical methods to detect suspected cheating behaviors in MOOC assessments, focusing on features like completion time and answer similarity across students. Alexandron et al.~\cite{alexandron2019fraud} extended this line of work with a more systematic analysis of harvesting and copying behavior in MOOCs. Li and Zhai~\cite{li2015detecting} used clustering to flag collusion in programming assignments. On the methods side, Isolation Forest~\cite{liu2008isolation} and One-Class SVM~\cite{scholkopf2001estimating} remain widely used as baselines for unsupervised anomaly detection. Malhotra et al.~\cite{malhotra2016lstm} demonstrated that LSTM encoder-decoder architectures show strong performance for anomaly detection in multivariate time series, which closely parallels the sequential structure of exam clickstream data. Chalapathy and Chawla~\cite{chalapathy2019deep} provide a comprehensive survey of deep learning approaches to anomaly detection. The key innovation of our work is that, rather than comparing behavioral anomaly to the general population, it is compared to each individual student's history.
+Several groups have worked on anomaly detection for academic dishonesty. Ruiperez-Valiente et al.~\cite{ruiperez2017detection} applied statistical methods to MOOC assessments, focusing on completion time and answer similarity across students; Alexandron et al.~\cite{alexandron2019fraud} extended this with a more systematic analysis of harvesting and copying; Li and Zhai~\cite{li2015detecting} used clustering to flag collusion in programming assignments. On the methods side, Isolation Forest~\cite{liu2008isolation} and One-Class SVM~\cite{scholkopf2001estimating} remain widely used baselines. Malhotra et al.~\cite{malhotra2016lstm} showed that LSTM encoder-decoder architectures perform strongly for anomaly detection in multivariate time series --- structurally similar to exam clickstreams --- and Chalapathy and Chawla~\cite{chalapathy2019deep} provide a broader survey of deep anomaly-detection methods. More recently, Transformer encoders have become the dominant sequence architecture in almost every domain where they have been tried~\cite{vaswani2017attention}, and we use them here as the main proposed detector. The key novelty of our work relative to the above is (i) the explicit combination of a Transformer-based sequence detector with a self-supervised LSTM-AE alternative, and (ii) drift normalisation that, where sufficient history exists, compares each student against their own baseline rather than the population.
 
 \subsection{Fairness in Educational AI}
-Fairness is a major issue in the development of automated educational tools. Baker and Hawn~\cite{baker2022algorithmic} provide a thorough review of algorithmic bias in education, covering predictive models, recommendation systems, and automated assessment. Kizilcec and Lee~\cite{kizilcec2022algorithmic} focus specifically on how algorithmic systems in education can perpetuate or amplify existing inequities, particularly along racial and socioeconomic lines. Gardner et al.~\cite{gardner2019evaluating} showed that even well-performing predictive models can exhibit significant performance gaps across demographic slices. In anomaly detection specifically, Zhang and Davidson~\cite{zhang2021fair} developed fairness-aware anomaly detection methods for unsupervised settings. Mehrabi et al.~\cite{mehrabi2021survey} offer a broad survey of fairness definitions and mitigation strategies in machine learning. Holstein et al.~\cite{holstein2019improving} investigated practitioner perspectives on fairness in educational technology, finding wide agreement that fairness needs to be a first-class design concern, not an afterthought.
+Fairness is a first-order concern in automated educational tooling. Baker and Hawn~\cite{baker2022algorithmic} provide a thorough review of algorithmic bias in education, covering predictive models, recommendation systems, and automated assessment; Kizilcec and Lee~\cite{kizilcec2022algorithmic} focus on how algorithmic systems can perpetuate or amplify existing inequities, particularly along racial and socioeconomic lines; Gardner et al.~\cite{gardner2019evaluating} showed that even well-performing predictive models can exhibit significant performance gaps across demographic slices. In anomaly detection specifically, Zhang and Davidson~\cite{zhang2021fair} developed fairness-aware methods for unsupervised settings; Mehrabi et al.~\cite{mehrabi2021survey} survey fairness definitions and mitigation strategies across ML. Holstein et al.~\cite{holstein2019improving} found broad practitioner agreement that fairness needs to be a first-class design concern rather than an afterthought.
 
 \subsection{Explainable AI in Education}
-The need for explainability in education-related AI applications can be justified from both practical and ethical viewpoints. Instructors need to understand \textit{why} a system has flagged a student before they can make a responsible decision about it. Khosravi et al.~\cite{khosravi2022explainable} argue that explainable AI is essential for building trust and enabling meaningful human oversight in educational contexts. SHAP~\cite{lundberg2017unified}, based on Shapley values from cooperative game theory, has become perhaps the most widely used method for generating feature-level explanations across domains. Swamy et al.~\cite{swamy2022evaluating} evaluated multiple explainability methods for student success prediction in MOOCs, finding that SHAP provided the most consistent and interpretable attributions. Doshi-Velez and Kim~\cite{doshivelez2017towards} lay out a general framework for defining and evaluating interpretability in machine learning, which informs our choice to provide both question-level and feature-level explanations. To the best of our knowledge, this paper is the first to explore the integration of personal anomaly detection, fairness calibration, and SHAP explainability in the setting of online examination integrity.
+Explainability in educational AI is justified on both practical and ethical grounds --- instructors need to understand \textit{why} a flag was raised before acting on it. Khosravi et al.~\cite{khosravi2022explainable} argue that explainable AI is essential for trust and meaningful human oversight. SHAP~\cite{lundberg2017unified}, grounded in Shapley values from cooperative game theory, has become the most widely used method for feature-level explanations across domains; Swamy et al.~\cite{swamy2022evaluating} evaluated several explainability methods for student-success prediction in MOOCs and found SHAP the most consistent and interpretable. Doshi-Velez and Kim~\cite{doshivelez2017towards} lay out a general framework for defining and evaluating interpretability, which informs our choice to present both question-level and feature-level SHAP explanations. To the best of our knowledge, this paper is the first to integrate a supervised Transformer detector, a self-supervised LSTM-AE alternative, post-hoc fairness calibration, and SHAP-based explainability in the single setting of online-exam integrity.
 
 % ============================================================
 % 3. PROPOSED FRAMEWORK
@@ -163,93 +163,58 @@ The need for explainability in education-related AI applications can be justifie
 \section{Proposed Framework}
 \label{sec:proposed}
 
-The overall architecture of our framework consists of four components, shown in Figure~\ref{fig:system_overview}: behavioral feature extraction from raw clickstream data, personalized baseline learning with an LSTM autoencoder, drift score computation with fairness-aware threshold calibration, and SHAP-based explainability of flagged sessions. Each of these steps is discussed in detail.
+Figure~\ref{fig:system_overview} shows the overall architecture. Raw EdNet clickstream data flows through behavioural feature extraction, then into two parallel sequence detectors --- a supervised Transformer classifier (our main proposed detector) and a self-supervised LSTM autoencoder --- plus a battery of session-level baselines. Detector scores are thresholded and passed through a fairness-aware calibration stage, and flagged sessions are finally decomposed by SHAP to produce instructor-facing explanations.
 
 \begin{figure}[htbp]
 \centering
-\fbox{\parbox{0.92\columnwidth}{\centering\vspace{1.5em}[System Architecture Diagram]\\[0.5em]
-Raw Clickstream $\rightarrow$ Feature Extraction $\rightarrow$ LSTM Autoencoder\\
-$\rightarrow$ Drift Score $\rightarrow$ Fairness Calibration $\rightarrow$ SHAP Explainability\vspace{1.5em}}}
-\caption{Overview of the proposed behavioral drift detection framework. Clickstream data flows through feature extraction, personalized baseline modeling, drift score computation with fairness calibration, and explainability. (Figure placeholder; to be replaced with a detailed architecture diagram in Stage-2.)}
+\fbox{\parbox{0.92\columnwidth}{\centering\vspace{1.0em}Raw Clickstream $\rightarrow$ Feature Extraction $\rightarrow$\\[0.3em]
+\{ Transformer Classifier \,\textbf{(Ours)}\ \,$|$\, LSTM Autoencoder \,$|$\, Baselines \}\\[0.3em]
+$\rightarrow$ Drift Score $\rightarrow$ Fairness Calibration $\rightarrow$ SHAP Explanations $\rightarrow$ Dashboard\vspace{1.0em}}}
+\caption{Overview of the proposed behavioural drift-detection framework. Clickstream data flows through feature extraction, detection (Transformer classifier as the main proposed model, LSTM autoencoder as a self-supervised alternative, plus classical baselines), fairness-aware threshold calibration, and SHAP-based explainability.}
 \label{fig:system_overview}
 \end{figure}
 
-\subsection{Behavioral Feature Extraction}
-Consider a student $s$ taking an exam with $Q$ questions. For each question $q \in \{1, 2, \ldots, Q\}$, we extract a behavioral feature vector $\mathbf{x}_q^{(s)}$ from the raw clickstream log. The features are designed to capture how a student interacts with each question, not whether they answer correctly:
+\subsection{Behavioural Feature Extraction}
+For each exam session we extract two parallel views of the same clickstream:
 
-\begin{itemize}
-    \item \textbf{Time per question} ($t_q$): total seconds spent on question $q$.
-    \item \textbf{Answer change count} ($c_q$): how many times the selected answer was modified before moving on.
-    \item \textbf{Navigation backtracking} ($b_q$): binary flag for whether the student returned to a previously visited question.
-    \item \textbf{Inter-question interval} ($\delta_q$): time gap between leaving question $q{-}1$ and engaging with question $q$.
-    \item \textbf{Question visit count} ($v_q$): total number of times question $q$ was visited during the session.
-    \item \textbf{Sequential deviation} ($d_q$): absolute difference between the question index $q$ and the order in which the student actually visited it, capturing non-linear navigation.
-\end{itemize}
+\paragraph{Session-level features (10 features, flat vector).} Used by the classical baselines (Rule-Based, Isolation Forest, One-Class SVM, Standard Autoencoder). These summarise a full session into one vector capturing time, uncertainty, and navigation behaviour: response-time mean / std / IQR / entropy, answer-change rate, keystroke-rhythm variance, pause frequency, question-sequence revisit ratio, speed score, and burst ratio.
 
-A complete exam session for student $s$ at exam instance $e$ is represented as a sequence:
+\paragraph{Action-level sequence features (10 features $\times$ up to 100 actions).} Used by the sequence models (Transformer, LSTM-AE, BiLSTM). Each action is represented by: time per question, answer-change count, revisit flag, inter-question gap, visit count, relative position in the session, response-time $z$-score within the session, burst indicator, cumulative speed, and gap ratio. All features are $z$-score normalised using training-set statistics computed on \emph{clean} sessions only, to prevent anomaly contamination of the normalisation statistics.
+
+This dual-view design is deliberate: the sequence models exploit temporal ordering, while the session-level vectors give the classical baselines a fair chance on a representation they can handle.
+
+\subsection{Main Proposed Detector: Transformer Classifier}
+Our main proposed detector is a supervised Transformer encoder with a classification head. Given an action-level sequence $\mathbf{X} \in \mathbb{R}^{T \times F}$ ($T \le 100$ actions, $F = 10$ features), we project to a $d_{\text{model}}$-dimensional space, add a learned positional encoding, and pass the result through a stack of standard Transformer encoder layers with padding-aware self-attention. A masked mean-pool over valid positions produces a session embedding, which is fed to a two-layer MLP head that emits a single anomaly logit:
+\begin{align}
+\mathbf{H} &= \text{TransformerEncoder}\bigl(\mathbf{X}\mathbf{W}_{\text{in}} + \mathbf{P},\, \text{pad\_mask}\bigr),\\
+\mathbf{z} &= \text{MaskedMean}(\mathbf{H}),\\
+\hat{y} &= \sigma\bigl(\text{MLP}(\mathbf{z})\bigr) \in (0,1).
+\end{align}
+We use $d_{\text{model}} = 128$, $4$ attention heads, $3$ encoder layers, and dropout $0.2$. Training uses Adam with binary cross-entropy on the synthetic anomaly labels, a positive-class weight equal to the negative/positive ratio, gradient clipping ($\lVert g \rVert \le 1$), and early stopping on validation loss (patience $10$). Self-attention is a better inductive bias here than a strictly recurrent model because action-level cheating patterns --- e.g., a burst of fast answers in the second half of a session --- can depend on question positions many steps apart, which attention captures directly.
+
+\subsection{Self-Supervised Alternative: LSTM Autoencoder}
+\label{sec:lstm_ae}
+A supervised detector depends on labels. When no anomaly labels are available --- arguably the more common deployment scenario --- we provide a self-supervised fallback: a 2-layer LSTM autoencoder (hidden dim $96$, latent dim $32$, dropout $0.2$) trained on \emph{only the normal sessions} of the training split with the masked-MSE reconstruction loss
 \begin{equation}
-\mathbf{X}^{(s,e)} = [\mathbf{x}_1^{(s,e)}, \mathbf{x}_2^{(s,e)}, \ldots, \mathbf{x}_Q^{(s,e)}] \in \mathbb{R}^{Q \times F}
+\mathcal{L}_{\text{recon}} = \frac{1}{\sum_t \mathbf{m}_t} \sum_{t=1}^{T} \mathbf{m}_t \,\bigl\lVert \mathbf{x}_t - \hat{\mathbf{x}}_t \bigr\rVert_2^2,
 \end{equation}
-where $F = 6$ is the number of per-question behavioral features. All features are z-score normalized using population-level statistics before being fed to the model.
+where $\mathbf{m}_t$ is the padding mask. Anomalous sessions, unseen during training, produce higher reconstruction error and are converted to a drift score via robust ($z$-score) normalisation; where a student has at least $5$ training sessions, the score is further blended with their personal mean/std to produce a personalised anomaly score. As Section~\ref{sec:results} shows, this model does not match the supervised Transformer numerically, but it is retained in the framework because (i) it illustrates what is achievable without labels, and (ii) the reconstruction signal is a useful diagnostic even in the labelled setting.
 
-\subsection{Personalized Baseline Learning via LSTM Autoencoder}
-The basic concept here is to try to learn what "normal" behavior looks like for each student during an exam by using a sequence-to-sequence autoencoder model on their past sessions. We use Long Short-Term Memory (LSTM)~\cite{hochreiter1997long} units as the backbone because they are well-suited to modeling temporal dependencies across sequential question interactions.
-
-\subsubsection{Architecture.}
-The encoder is a 2-layer LSTM that reads the input sequence $\mathbf{X}^{(s,e)}$ and compresses it into a fixed-length latent vector $\mathbf{z}^{(s,e)} \in \mathbb{R}^{d}$:
-\begin{equation}
-\mathbf{z}^{(s,e)} = \text{Encoder}_{\theta}(\mathbf{X}^{(s,e)})
-\end{equation}
-
-The decoder is a mirrored 2-layer LSTM that reconstructs the original sequence from this latent representation:
-\begin{equation}
-\hat{\mathbf{X}}^{(s,e)} = \text{Decoder}_{\phi}(\mathbf{z}^{(s,e)})
-\end{equation}
-
-Training minimizes the mean squared reconstruction loss:
-\begin{equation}
-\mathcal{L}_{\text{recon}} = \frac{1}{Q \cdot F} \sum_{q=1}^{Q} \|\mathbf{x}_q^{(s,e)} - \hat{\mathbf{x}}_q^{(s,e)}\|_2^2
-\end{equation}
-
-\subsubsection{Personalization strategy.}
-If the student has enough exam sessions, i.e., at least five, the autoencoder is fine-tuned on the student's data. For other students, we pre-trained a shared "population" model on all available training data and used transfer learning, where the decoder weights are frozen and only the last layer of the encoder is fine-tuned on the student's limited history. This approach solves the cold-start problem and, at the same time, follows the direction of personalization.
-
-\subsection{Behavioral Drift Score Computation}
-When student $s$ sits a new exam $e^*$, we pass their clickstream through the trained autoencoder and compute the reconstruction loss. This raw loss figure tells us how different this session is from what the model has learned as "normal." To normalize this so that it's comparable across students, we normalize it relative to the student's own baseline:
-
-\begin{equation}
-\text{DriftScore}(s, e^*) = \frac{\mathcal{L}_{\text{recon}}(s, e^*) - \mu_s}{\sigma_s}
-\end{equation}
-
-Here $\mu_s$ and $\sigma_s$ are the mean and standard deviation of reconstruction losses from the student's historical sessions. This z-score formulation is important: it means the drift score measures how unusual a session is \textit{for that particular student}, not against the population at large. A slow and methodical student, if he rushes through the exam, will have a high drift score even if his raw response times are still within the normal range.
-
-Sessions exceeding a configurable threshold $\tau$ are flagged for instructor review.
+\subsection{Classical Baselines}
+\label{sec:baselines}
+For completeness and to characterise how much the sequence models actually buy, we evaluate against five baselines: a \emph{Rule-Based} detector (thresholds on response time, answer-change rate, and burst ratio), \emph{Isolation Forest}~\cite{liu2008isolation}, \emph{One-Class SVM}~\cite{scholkopf2001estimating} with an RBF kernel, a \emph{Standard Autoencoder} on the flat session-level feature vector (the non-sequential ablation of the LSTM-AE), and a supervised \emph{BiLSTM Classifier} sharing the Transformer's training pipeline but with a stacked bidirectional LSTM encoder in place of self-attention.
 
 \subsection{Fairness-Aware Threshold Calibration}
-Furthermore, an uncalibrated drift threshold may lead to differing flag rates between demographic groups. This is true even for personalized baselines, where certain demographic groups may have more variable historical behavior (for example, due to variable internet access for tests). In such cases, the spread of the drift distribution for such demographic groups may be larger, and hence they are flagged more often.
-
-To address this, let $G = \{g_1, g_2, \ldots, g_K\}$ be a set of demographic groups. We adjust the flagging threshold per group:
-
+An uncalibrated threshold can lead to different flag rates across demographic groups even when the underlying model is accurate overall. We compute a per-group threshold
 \begin{equation}
-\tau_{g_k} = \tau + \alpha \cdot (\bar{D}_{g_k} - \bar{D}_{\text{global}})
+\tau_{g_k} = \tau + \alpha \cdot \bigl(\bar{D}_{g_k} - \bar{D}_{\text{global}}\bigr),
 \end{equation}
+where $\bar{D}_{g_k}$ is the mean drift score for group $g_k$ and $\alpha \in [0,1]$ is tuned on validation by grid search over $[0, 1]$. The calibrated threshold is kept for a given attribute only if both the demographic-parity ratio and the equalized-odds difference improve; otherwise we fall back to the global threshold (to avoid over-fitting to noisy per-group means). We evaluate across four attributes: gender, age band, IMD band, and disability status.
 
-where $\bar{D}_{g_k}$ is the mean drift score for group $g_k$, $\bar{D}_{\text{global}}$ is the global mean drift score, and $\alpha \in [0, 1]$ is a fairness-sensitivity parameter. When $\alpha = 0$, no calibration is applied; when $\alpha = 1$, thresholds are fully adjusted to equalize mean drift across groups. In practice, we tune $\alpha$ to balance detection performance against fairness constraints.
+Note that we also experimented with an \emph{in-processing} fairness approach --- a gradient-reversal demographic discriminator on the LSTM-AE latent --- but found it degraded reconstruction quality enough to erase the detection signal. This is reported for transparency and is disabled by default; post-hoc calibration is the recommended mode.
 
-We evaluate fairness along two standard criteria:
-\begin{itemize}
-    \item \textbf{Demographic Parity Ratio (DPR):} the least ratio of the flagging rate for any group to the total flagging rate, aiming for $\geq 0.80$.
-    \item \textbf{Equalized Odds Difference (EOD):} the largest difference in true positives or false positives for any group, aiming for $\leq 0.10$.
-\end{itemize}
-
-\subsection{SHAP-based Explainability}
-For each session that crosses the flagging threshold, we compute SHAP values~\cite{lundberg2017unified} to decompose the drift score into per-feature contributions. The SHAP framework satisfies:
-\begin{equation}
-f(\mathbf{x}) = \phi_0 + \sum_{j=1}^{F \cdot Q} \phi_j
-\end{equation}
-where $\phi_0$ is the expected drift score and each $\phi_j$ is the marginal contribution of feature $j$. We use the KernelSHAP approximation with 100 background samples for computational tractability.
-
-The SHAP values are aggregated at two levels. At the \textbf{question level}, we sum SHAP values across features for each question to identify which questions exhibited the most unusual behavior. At the \textbf{feature level}, we sum across questions to identify which behavioral dimensions (e.g., answer changes, navigation patterns) drove the alert overall. Both aggregations are presented in the instructor dashboard alongside a temporal timeline of the exam session.
+\subsection{SHAP Explanations}
+For each flagged session we compute KernelSHAP~\cite{lundberg2017unified} attributions using $200$ background samples drawn from the training set. SHAP values are aggregated two ways: \textbf{feature-level} (summed over timesteps, to answer ``which behavioural dimension drove this flag?'') and \textbf{question-level} (summed over features, to answer ``which specific questions looked most unusual?''). Both views are surfaced in the instructor dashboard. KernelSHAP is model-agnostic and therefore works identically for the Transformer and the LSTM-AE. Its main cost is compute: the number of coalitions scales with the background size, which is why we cap it at $200$ samples and attribute only for flagged sessions rather than the whole test set --- a design choice we return to in the Discussion.
 
 % ============================================================
 % 4. EXPERIMENTAL DESIGN
@@ -260,130 +225,173 @@ The SHAP values are aggregated at two levels. At the \textbf{question level}, we
 \subsection{Datasets}
 \label{subsec:datasets}
 
-We construct our evaluation dataset from two publicly available sources, combined to provide both behavioral and demographic data.
+We construct our evaluation corpus from two public sources plus a synthetic-anomaly pipeline.
 
-\subsubsection{EdNet (Primary Behavioral Data).}
-EdNet~\cite{choi2020ednet} is a large-scale educational interaction dataset collected from the Santa platform, a mobile tutoring application. The KT2 subset, which we use, has detailed interaction data for around 297,000 students and 13,000 exercises. The interaction data include time stamps, the selected answer, answer changes, and elapsed time, which is similar to the requirements for our behavioral model. Although the EdNet data has its origin in a tutoring environment and not a traditional timed exam, the nature of the interaction data, with students working through a sequence of questions with time stamps and answer changes, is similar to the structure of the data for an online exam. We divide the contiguous bundles of exercises into pseudo-exam sessions of 20-50 questions based on time gaps, and we filter for students with at least five such pseudo-sessions to ensure personalization.(For sake of faster model training we shall be using only 62000-63000 Students Data of the 297000 Students.)
+\subsubsection{EdNet-KT2 (Primary Behavioural Data).}
+EdNet~\cite{choi2020ednet} is a large-scale educational interaction dataset collected from the Santa tutoring platform. The KT2 subset includes time-stamped interactions, selected answers, answer-change events, and elapsed times for roughly 297{,}000 students. We sample 15{,}000 students, split their continuous interaction stream into pseudo-exam sessions of 20--50 questions using a 30-minute gap heuristic, and keep only sessions in that range.
 
-\subsubsection{OULAD (Demographic Data for Fairness).}
-The Open University Learning Analytics Dataset (OULAD)~\cite{kuzilek2017oulad} includes student demographic information---gender, age band, region, disability status, and Index of Multiple Deprivation (IMD) band---across 32,593 students and 22 course modules. Although the student populations in OULAD and EdNet are different, we use OULAD as a proxy source to provide metadata about the students’ demography. We draw the demographic profiles from the distribution provided by OULAD and match the students in EdNet using a stratified matching approach. We recognize this as a limitation and discuss this in more detail in Section~\ref{sec:conclusion}.
+\subsubsection{OULAD (Demographics for Fairness).}
+The Open University Learning Analytics Dataset~\cite{kuzilek2017oulad} provides student demographics --- gender, age band, IMD band, disability, region --- for 32{,}593 students. Because EdNet carries no demographic attributes, we synthetically assign demographics to EdNet students by drawing from the OULAD marginal distribution, and we pool sparse groups (age band $\rightarrow$ binary, IMD band $\rightarrow$ \{Low, Medium, High, Unknown\}) for reliable per-group estimates. Small controlled per-group perturbations are applied to the behavioural features so that a fairness signal actually exists to calibrate against; this validates the \emph{mechanism}, not any organic demographic correlation in EdNet. We discuss the limitations of synthetic demographic linkage in Section~\ref{sec:discussion}.
 
-\subsubsection{Synthetic Anomaly Injection.}
-Since neither dataset comes with labeled cheating instances, we synthesize anomalous sessions by perturbing normal ones. Our injection strategies are drawn from behaviors described in the cheating detection literature~\cite{ruiperez2017detection, alexandron2019fraud}:
-\begin{itemize}
-    \item \textbf{Time manipulation:} artificially compressing or stretching response times for a subset of questions (simulating rushed copying or stalling to look up answers).
-    \item \textbf{Non-linear navigation:} adding random jumps in question visitation order (simulating shared answer keys with specific questions targeted).
-    \item \textbf{Excessive answer changes:} adding multiple modification events (simulating hesitation from external cues).
-    \item \textbf{Uniform response patterns:} replacing natural time variation with near-constant per-question times (simulating copied responses).
-\end{itemize}
-We inject anomalies into 10\% of sessions, consistent with contamination ratios used in prior anomaly detection benchmarks~\cite{chalapathy2019deep}.
+\subsubsection{Synthetic Anomaly Pipeline.}
+Neither dataset carries cheating labels, so we construct our own. We use a two-stage pipeline. First, a literature-grounded rule-based generator~\cite{ruiperez2017detection, alexandron2019fraud} injects seven families of anomalies --- rapid responses (1.5--3$\times$ compression on a contiguous block), excessive answer changes, irregular timing (pause-burst-pause), uniform mechanical response patterns, random navigation shuffles, correlated zigzag shifts, and partial-session cheating (a transition point partway through the session). Each anomalous session receives exactly one primary timing anomaly and optionally one supplementary anomaly with probability $0.6$. We use a 15\% contamination rate --- slightly higher than the 10\% commonly used in the anomaly-detection literature, to give threshold optimisation a stronger signal. Second, a conditional GAN trained on the rule-based anomalies generates additional synthetic anomalies at the feature-sequence level, replacing 50\% of the rule-based anomalies in the training split only; sanity filters (per-feature range and NaN checks) reject samples outside the observed feature envelope. Validation and test splits are left purely rule-based, so evaluation numbers never benefit from the GAN fooling itself.
 
-\subsection{Baseline Methods}
-We compare our framework against four alternatives:
-\begin{enumerate}
-    \item \textbf{Rule-Based Heuristics:} sessions are flagged when any feature exceeds a fixed threshold (e.g., time $>$ 3$\sigma$ from population mean, answer changes $>$ 5 per question). This mirrors common institutional practice.
-    \item \textbf{Isolation Forest}~\cite{liu2008isolation}: an unsupervised tree-based method that isolates anomalies via random partitioning. Applied to aggregated session-level feature vectors.
-    \item \textbf{One-Class SVM}~\cite{scholkopf2001estimating}:learns a decision boundary around normal data in kernel-mapped feature space.
-    \item \textbf{Standard Autoencoder:} a non-recurrent feedforward autoencoder on flattened session features, without any temporal modeling. This is an ablation study to isolate the effect of the LSTM's temporal modeling.
-\end{enumerate}
+\subsection{Splits, Models, and Training}
+Sessions are split \emph{chronologically per student} into train/val/test (70/15/15) using the within-student timestamp ordering. Random splitting would leak future sessions into training; the chronological protocol mirrors real deployment. Autoencoders (LSTM-AE and Standard-AE) are trained on \emph{only normal} sessions from the train split; the supervised models (Transformer, BiLSTM) and the classical baselines are trained on the full train split. Threshold selection for every model is done on the \emph{validation} split by maximising a weighted F1 score, and the selected threshold is then frozen for test evaluation. All experiments were run on a single NVIDIA RTX 4060 GPU. Key hyperparameters are given in Table~\ref{tab:hparams}.
 
-\subsection{Implementation Details}
-All of these models are implemented using PyTorch for neural networks and scikit-learn for baselines. Our LSTM autoencoder model utilizes a 2-layer encoder with a hidden layer of dimension 64, a latent space of dimension $d = 32$, and a mirrored decoder with 2 layers. Our optimizer of choice was Adam with a learning rate of $10^{-3}$, a batch size of 32, and we trained for 100 epochs with early stopping set to patience of 10. SHAP was implemented using the KernelExplainer with 100 background samples from our training set. Our instructor dashboard was implemented with Streamlit. Our experiments are run on a machine with a single NVIDIA RTX 4060 GPU.
+\begin{table}[htbp]
+\caption{Key hyperparameters.}
+\label{tab:hparams}
+\centering
+\small
+\begin{tabular}{lc}
+\toprule
+\textbf{Component} & \textbf{Value} \\
+\midrule
+Transformer $d_{\text{model}}$ / heads / layers & $128$ / $4$ / $3$ \\
+Transformer dropout & $0.2$ \\
+BiLSTM hidden / layers & $96$ / $2$ \\
+LSTM-AE hidden / latent / layers & $96$ / $32$ / $2$ \\
+Optimiser & Adam, lr $10^{-3}$, wd $10^{-4}$ \\
+Batch size / epochs (supervised) & $256$ / $50$ (early stop patience $10$) \\
+Epochs (LSTM-AE) & up to $300$ (patience $30$) \\
+Action-level max seq length $T$ & $100$ \\
+Per-action features $F$ & $10$ \\
+Synthetic contamination & $15\%$ (50\% GAN-augmented in train) \\
+SHAP background samples & $200$ \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 % ============================================================
-% 5. RESULTS (EVALUATION METRICS)
+% 5. RESULTS
 % ============================================================
-\section{Results: Evaluation Metrics}
+\section{Results}
 \label{sec:results}
 
-This section describes the evaluation metrics we use to evaluate the proposed framework based on three aspects: anomaly detection performance, fairness, and explainability. In the following sections, we will present the metrics and table structures for the results in Stage-1, and the numerical values will be filled in during Stage-2. 
+\subsection{Detection Performance}
+Table~\ref{tab:main_results} reports all seven detectors on the held-out test split.
 
-\subsection{Anomaly Detection Metrics}
-We use the following metrics to evaluate the detection performance on a waiting test set. All the models, i.e., our proposed model and the four baseline models, are compared using the same metrics and data split. 
-
-\begin{itemize}
-    \item \textbf{ROC-AUC} (Area Under the Receiver Operating Characteristic): This metric estimates the capacity of the model to separate normal from anomalous sessions for all possible thresholds. The score is 1.0 for a perfect separation, 0.5 for a random separation.
-    \item \textbf{PR-AUC} C(Area Under the Precision-Recall Curve): This is more useful when the number of anomalies is small (10\% contamination in our setup),it is more focused on how well the model can retrieve the actual anomalies without too many false alarms. 
-    \item \textbf{Precision@10}: the proportion of truly anomalous sessions among the top 10highest-scoring flagged sessions. This measure is of practical interest since, in a deployment setting, the instructor will typically inspect only a small number of the most suspicious sessions. 
-    \item \textbf{F1-Score}: the harmonic mean of precision and recall, computed at the threshold that maximizes F1 on a validation split. This provides a single summary of detection quality at the operating point.
-\end{itemize}
-
-Table~\ref{tab:main_results} shows the comparison structure we use to evaluate all five methods.
-
-\begin{table}[htbp]
-\caption{Anomaly Detection Performance Comparison}
+\begin{table*}[htbp]
+\caption{Anomaly-detection performance on the held-out test split (higher is better for all columns). The proposed Transformer classifier outperforms every baseline on every metric except P@10 (tied) and P@50 (tied).}
 \label{tab:main_results}
 \centering
-\begin{tabular}{lcccc}
+\begin{tabular}{lccccccc}
 \toprule
-\textbf{Method} & \textbf{ROC-AUC} & \textbf{PR-AUC} & \textbf{P@10} & \textbf{F1} \\
+\textbf{Method} & \textbf{ROC-AUC} & \textbf{PR-AUC} & \textbf{F1} & \textbf{Precision} & \textbf{Recall} & \textbf{P@10} & \textbf{P@50} \\
 \midrule
-Rule-Based  & -- & -- & -- & -- \\
-Isolation Forest  & -- & -- & -- & -- \\
-One-Class SVM  & -- & -- & -- & -- \\
-Std. Autoencoder  & -- & -- & -- & -- \\
-\textbf{Ours (LSTM-AE)} & -- & -- & -- & -- \\
+Rule-Based            & 0.588 & 0.171 & 0.288 & 0.205 & 0.485 & 0.00 & 0.14 \\
+Isolation Forest      & 0.768 & 0.377 & 0.410 & 0.293 & 0.681 & 0.30 & 0.58 \\
+One-Class SVM         & 0.719 & 0.463 & 0.441 & 0.377 & 0.530 & 1.00 & 0.94 \\
+Standard Autoencoder  & 0.755 & 0.480 & 0.358 & 0.238 & 0.720 & 0.90 & 0.96 \\
+LSTM Autoencoder      & 0.635 & 0.243 & 0.257 & 0.149 & 0.933 & 0.30 & 0.32 \\
+BiLSTM Classifier     & 0.964 & 0.897 & 0.805 & 0.775 & 0.837 & 1.00 & 1.00 \\
+\textbf{Transformer (Ours)} & \textbf{0.975} & \textbf{0.930} & \textbf{0.832} & \textbf{0.778} & \textbf{0.894} & \textbf{1.00} & \textbf{1.00} \\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
-\subsection{Fairness Metrics}
-Weconsider fairness across four sensitive demographic dimensions based on the OULAD data: gender, age band, IMD band, and dis ability status. We consider two standard group fairness metrics:  
-
-\begin{itemize}
-    \item \textbf{Demographic Parity Ratio (DPR):} defined as
-    
-    $\text{DPR} = \min_{g \in G} P(\hat{Y}=1 \mid G=g) \;/\; \max_{g \in G} P(\hat{Y}=1 \mid G=g)$,
-    
-    i.e., the minimum-to-maximum ratio of flagging rates across demographic groups. A DPR of 1.0 means all groups are flagged at identical rates. We target DPR $\geq 0.80$, a commonly used threshold in the fairness literature~\cite{mehrabi2021survey}.
-    \item \textbf{Equalized Odds Difference (EOD):} defined as $\text{EOD} = \max_{g \in G} |TPR_g - TPR_{\text{global}}| + \max_{g \in G} |FPR_g - FPR_{\text{global}}|$, measuring the maximum gap in true positive rate (TPR) or false positive rate (FPR) across groups. We target EOD $\leq 0.10$, ensuring that no group faces substantially different error rates.
-\end{itemize}
-
-We report these metrics both before and after applying the fairness-aware threshold calibration described in Section~\ref{sec:proposed}. Table~\ref{tab:fairness_results} shows the evaluation structure.
-
-\begin{table}[htbp]
-\caption{Fairness Metrics Before and After Calibration}
-\label{tab:fairness_results}
-\centering
-\begin{tabular}{lccc}
-\toprule
-\textbf{Metric} & \textbf{Before Cal.} & \textbf{After Cal.} & \textbf{Target} \\
-\midrule
-DPR (Gender) & -- & -- & $\geq 0.80$ \\
-DPR (Age Band) & -- & -- & $\geq 0.80$ \\
-DPR (IMD Band) & -- & -- & $\geq 0.80$ \\
-EOD (Gender) & -- & -- & $\leq 0.10$ \\
-EOD (Age Band) & -- & -- & $\leq 0.10$ \\
-EOD (IMD Band) & -- & -- & $\leq 0.10$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsection{Explainability Evaluation}
-We evaluate the quality of SHAP-based explanations through two approaches:
-
-\begin{itemize}
-    \item \textbf{Feature importance consistency:}To ensure the consis tency of the feature importance, we verify that the top fea tures determined by SHAP align with the type of synthetic anomalies. For example, for sessions with rapid responses, the SHAP values for the response time features should be high, and for sessions with navigation anomalies, the SHAP values for sequential deviation should be high. 
-    \item \textbf{Qualitative case study:} We will provide SHAP waterfall plots for these sessions, as well as determine whether they are pedagogically meaningful, i.e., would an instructor look ing at these results be able to make an educated hypothesis about what kind of behavioral anomaly is being represented. 
-\end{itemize}
+Figures~\ref{fig:roc}, \ref{fig:pr}, \ref{fig:cm}, \ref{fig:pk}, and \ref{fig:scores} show the underlying ROC curves, precision-recall curves, confusion matrices, precision-at-$k$ curves, and raw score distributions for all models.
 
 \begin{figure}[htbp]
 \centering
-\fbox{\parbox{0.92\columnwidth}{\centering\vspace{1.5em}[SHAP Waterfall Plot]\\[0.5em]Feature contributions to anomaly score\\for a sample flagged session\vspace{1.5em}}}
-\caption{Example SHAP-based explanation for a flagged session, showing which behavioral features (e.g., time per question, answer change count) contributed most to the drift score. (Figure placeholder; to be populated with real SHAP output in Stage-2.)}
-\label{fig:shap_example}
+\includegraphics[width=\columnwidth]{model_comparison.png}
+\caption{Side-by-side summary of all seven detectors on the four headline metrics.}
+\label{fig:modelcmp}
 \end{figure}
 
-\subsection{Ablation Study Design}
-To isolate the contribution of each architectural choice, we define the following ablation configurations:
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\columnwidth]{roc_curves.png}
+\caption{ROC curves on the held-out test split. The supervised sequence models (Transformer, BiLSTM) dominate; the self-supervised LSTM-AE underperforms the Standard-AE, which we attribute to the higher-capacity action-level representation being harder to reconstruct faithfully.}
+\label{fig:roc}
+\end{figure}
 
-\begin{itemize}
-    \item \textbf{LSTM vs.\ feedforward:} comparing the full LSTM-AE against a feedforward autoencoder (Standard AE baseline) to quantify the benefit of temporal modeling.
-    \item \textbf{Personalized vs.\ population baseline:} comparing z-score drift normalization for each student to a global threshold applied uniformly.
-    \item \textbf{With vs.\ without fairness calibration:} investigating the balance between detection performance (ROC-AUC, F1) and fairness (DPR, EOD) when using group-specific thresholds. 
-\end{itemize}
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\columnwidth]{pr_curves.png}
+\caption{Precision-Recall curves. The supervised Transformer's lead over the BiLSTM is most visible in the high-recall regime.}
+\label{fig:pr}
+\end{figure}
 
-These ablations will be evaluated with the same metrics as above for ROC-AUC and F1, which will allow us to compare each compo nent’s contribution to the overall performance. 
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\columnwidth]{confusion_matrices.png}
+\caption{Confusion matrices at each model's tuned operating threshold. The Transformer produces only 57 false negatives out of 3{,}860 test sessions.}
+\label{fig:cm}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\columnwidth]{precision_at_k.png}
+\caption{Precision-at-$k$ curves. Both supervised models achieve perfect precision over the top-50 ranked sessions --- operationally the most relevant regime for instructors who only review a shortlist.}
+\label{fig:pk}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\columnwidth]{score_distributions.png}
+\caption{Anomaly-score distributions for normal vs anomalous sessions. The supervised sequence models produce clean bimodal separations; the LSTM-AE reconstruction scores overlap substantially, consistent with its lower ROC-AUC.}
+\label{fig:scores}
+\end{figure}
+
+A few observations are worth highlighting. (i) The supervised Transformer beats every baseline on every metric except where it ties at the top-$k$ ceiling. (ii) The supervised BiLSTM closes most of the gap --- supervision with GAN-augmented anomaly labels is doing most of the work, with the Transformer's attention adding a further $\sim$1 ROC-AUC point and a $\sim$3 PR-AUC points. (iii) The self-supervised LSTM-AE underperforms even Isolation Forest on ROC-AUC. We believe this is the right result to report: an action-level reconstruction target is much harder than a session-level one, and the AE's advantage shows only when supervision is unavailable. (iv) Rule-Based is decisively the weakest method, validating the project premise that hand-crafted thresholds cannot handle the between-student variability in exam behaviour.
+
+\subsection{LSTM-AE Training Dynamics}
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\columnwidth]{training_curves_lstm_ae.png}
+\caption{LSTM autoencoder training and validation reconstruction loss. The model converges cleanly on the clean-only training set with no sign of overfitting, confirming that the weaker detection numbers in Table~\ref{tab:main_results} are a representational limitation of self-supervised reconstruction on action-level sequences rather than an optimisation problem.}
+\label{fig:lstm_curves}
+\end{figure}
+
+\subsection{Fairness}
+Table~\ref{tab:fairness_results} reports demographic-parity and equalized-odds metrics for the Transformer detector, before and after per-group threshold calibration, across all four sensitive attributes.
+
+\begin{table}[htbp]
+\caption{Fairness metrics for the Transformer detector, before and after per-group threshold calibration. DPR targets $\geq 0.80$; EOD targets $\leq 0.10$.}
+\label{tab:fairness_results}
+\centering
+\small
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Attribute} & \textbf{DPR before} & \textbf{DPR after} & \textbf{EOD before} & \textbf{EOD after} \\
+\midrule
+Gender        & 0.978 & 1.000 & 0.024 & 0.000 \\
+Age Band      & 0.963 & 1.000 & 0.009 & 0.000 \\
+IMD Band      & 0.870 & 1.000 & 0.094 & 0.000 \\
+Disability    & 0.887 & 1.000 & 0.006 & 0.000 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+All four attributes meet both targets even \emph{before} calibration, which is encouraging: the Transformer detector is already approximately fair on the synthetic-demographic test split. Calibration drives residual disparity to zero in every case. Figure~\ref{fig:fair} visualises flag-rate ratios before and after calibration.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\columnwidth]{fairness_comparison.png}
+\caption{Flag-rate ratios by group, before and after per-group threshold calibration.}
+\label{fig:fair}
+\end{figure}
+
+We stress that these fairness numbers are bounded above by the realism of the synthetic demographic assignment. The \emph{mechanism} demonstrated here --- post-hoc $\alpha$-calibrated thresholds constrained to not worsen either metric --- is the contribution; the specific numerical gaps on a real exam population could look rather different and would need to be re-evaluated at deployment time.
+
+\subsection{Explainability}
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\columnwidth]{shap_summary.png}
+\caption{SHAP summary plot for the Transformer detector across a sample of flagged sessions.}
+\label{fig:shap}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\columnwidth]{feature_importance.png}
+\caption{Aggregated feature-level SHAP importance. Time-per-question, response-time $z$-score, and answer-change count are the dominant drivers, which aligns with the fact that most synthetic anomaly families perturb those features directly.}
+\label{fig:featimp}
+\end{figure}
+
+Figures~\ref{fig:shap} and~\ref{fig:featimp} confirm the expected behaviour qualitatively: the features that SHAP flags as important are the same features our anomaly generators perturb. In the dashboard, per-session question-level attributions also let instructors pinpoint \emph{when} in a session the unusual behaviour occurred --- most often, for partial-session anomalies, at the transition point built into that anomaly family.
 
 % ============================================================
 % 6. DISCUSSION
@@ -391,15 +399,17 @@ These ablations will be evaluated with the same metrics as above for ROC-AUC and
 \section{Discussion}
 \label{sec:discussion}
 
-Several aspects of this work warrant further discussion.
+\textbf{Why the Transformer beats the LSTM-AE.} The LSTM-AE has to reconstruct the full action-level sequence, which is a much harder target than emitting a scalar logit. With 10 features over up to 100 actions, the reconstruction surface is bumpy; training on clean-only sessions helps but does not fully separate normals from anomalies in score space (visible in Figure~\ref{fig:scores}). The Transformer is directly optimised for the discrimination task and has an attention inductive bias well-suited to the partial-session anomalies (Section~\ref{subsec:datasets}) that have a transition point. This mirrors the broader trend of Transformers overtaking RNNs in sequential tasks once labels are available.
 
-\textbf{Dataset limitations.} Our use of EdNet as a proxy for actual exam clickstream data is a practical compromise. EdNet does log tutoring interactions which have some structural similarities to the exam data, but the tutoring session is not as high-pressure as the exam, and the student's behavior could vary as a result. The assignment of the synthetic demographic data from OULAD adds another level of approximation to the results. Actual validation with real exam clickstream data and demographic information would greatly strengthen the results.
+\textbf{Synthetic data limitations.} We are acutely aware that this paper's detection numbers are computed against synthetic anomalies generated by a GAN seeded on rule-based templates. These are literature-grounded but by construction representative of the behaviours the generator knows about. Real cheating behaviour in real exams likely includes modes no generator we built can reproduce, and our numbers should be read as \emph{relative} comparisons between detectors rather than absolute deployment estimates. The same caveat applies to the fairness numbers: the demographic attributes themselves are synthetically assigned from OULAD marginals and do not carry any real correlation to EdNet behaviour; the per-group perturbations we apply exist only to create a calibration target. Validation on a real exam clickstream corpus with real cheating ground truth is the single most important next step.
 
-\textbf{Cold-start problem.} Students in their first exam do not have a historical baseline. Our approach to transfer learning helps this problem partially, although the drift score is inherently less meaningful for these students. We suggest that in a deployed setting, the drift scores for the first exam be marked as such and given reduced weight in the flagging decision.
+\textbf{SHAP scalability.} KernelSHAP is model-agnostic but expensive: each explained session requires many forward passes proportional to the background-set size. We cap the background at $200$ samples and explain only flagged sessions --- reasonable in deployment, where an instructor only reviews a shortlist, but clearly a bottleneck if one wanted to explain every session. For a larger-scale deployment, model-specific attribution (e.g., attention rollout for the Transformer, integrated gradients for the LSTM-AE) would be the obvious follow-up; we have left this out here because KernelSHAP lets us treat both detectors identically.
 
-\textbf{Ground truth for cheating.} There is no reliable method to access the ground truth labels for the behavior of cheating. Our method of synthetic anomalies offers a controlled experimental setting, although the connection between our artificially added anomalies and the actual behavior of cheating is imperfect. Controlled user studies where human subjects volunteer and are asked to behave in a cheating fashion are valuable.
+\textbf{In-processing vs.\ post-hoc fairness.} We tried an in-processing approach: a demographic discriminator on the LSTM-AE latent trained with gradient reversal, to remove demographic signal from the representation itself. In our setup it noticeably degraded reconstruction quality, to the point where the detection signal suffered. This is not an argument against in-processing fairness in general --- the constraint we built may have been too aggressive, or it may have interacted poorly with the already-tight bottleneck. It is the reason we default to post-hoc $\alpha$-calibration, which is simpler, does not compromise detection, and was sufficient to hit DPR $\geq 0.80$ / EOD $\leq 0.10$ on every attribute.
 
-\textbf{Fairness scope.}We consider group fairness for the observable demographic groups. Individual fairness, or the notion that similar students should be treated similarly, is a stronger fairness guarantee that we leave for future work. Another type of fairness that we could further examine is intersectional fairness.
+\textbf{Cold-start.} Students in their first exam have no history, so personalised blending degenerates to the population score. The framework handles this gracefully (the blend weight $\lambda_s = \min(1, n_{\text{sessions}}/5)$), but the score is inherently less informative for these students and a deployed system should tag the first one or two sessions with a reduced-confidence indicator in the dashboard.
+
+\textbf{Ground truth.} There is no publicly available dataset with verified cheating labels at the clickstream level; we know of no realistic path to one short of IRB-approved controlled studies. Synthetic anomalies offer a controlled experimental setting in exchange for a realism ceiling; we have tried to be honest about where that ceiling lies.
 
 % ============================================================
 % 7. CONCLUSION
@@ -407,9 +417,9 @@ Several aspects of this work warrant further discussion.
 \section{Conclusion}
 \label{sec:conclusion}
 
-We have proposed a framework for personalized behavioral drift detection in online exams that combines three ideas which, to the best of our knowledge, have not been explored together in the past: per-student behavioral baselines from self-supervised learning with LSTM autoencoders, fair thresholding, and SHAP-based explainability. The framework only works with clickstream data and does not have the privacy issues of webcam-based proctoring systems.
+We proposed a framework for behavioural drift detection in online exams that combines a supervised Transformer classifier (main proposed detector), a self-supervised LSTM autoencoder (label-free alternative), post-hoc fairness-aware threshold calibration, and SHAP-based explainability. On an EdNet-KT2-derived corpus of $\sim$15{,}000 students augmented with OULAD demographics and a GAN-augmented synthetic anomaly pipeline, the Transformer reaches ROC-AUC $0.975$, F1 $0.832$, and perfect precision over the top-50 ranked sessions, outperforming Isolation Forest, One-Class SVM, a standard autoencoder, a rule-based baseline, the LSTM autoencoder, and a supervised BiLSTM. Fairness calibration reduces residual demographic disparity to zero on every attribute on the test split. SHAP produces feature- and question-level explanations that align with the behavioural signatures of our synthetic anomalies.
 
-The experimental setup will test our method against standard baselines on the EdNet dataset, extended with OULAD demographic information and synthetic anomalies. Our experimental results will show that the proposed method outperforms standard methods in terms of false positive reduction, that fairness calibration leads to equal flagging rates across demographic groups, and that SHAP explanations provide actionable and interpretable information for each flag for the instructor.
+The strongest caveat is that our evaluation runs against synthetic anomalies and synthetic demographic attributes. The specific numbers should be read as relative rankings of detectors, not as deployment-ready estimates. A real-exam clickstream corpus with verified integrity outcomes is the single most useful thing that could happen to this line of work next.
 
 % ============================================================
 % 8. FUTURE SCOPE
@@ -417,20 +427,16 @@ The experimental setup will test our method against standard baselines on the Ed
 \section{Future Scope}
 \label{sec:future}
 
-Several promising directions extend the work presented in this paper:
+Several directions extend this work:
 \begin{itemize}
-    \item \textbf{Temporal baseline evolution:} Student behaviors do change over the course of a semester, and this is likely due to increased exposure and comfort with the exam interface. Adaptive baseline evolution using online learning may be effective at maintaining the baseline.
-    \item \textbf{Multi-modal signals:} Using other non-invasive signals such as typing patterns and mouse movements may increase the sensitivity of the approach without compromising user privacy.
-    \item \textbf{Federated learning:} Learning multiple models, one for each institution, without sharing any individual user's data may increase the generalizability of the approach without violating any privacy regulations.
-    \item \textbf{Causal reasoning:} Not all behavioral changes are indicative of cheating. Student anxiety, interface issues, and unfamiliarity with the exam format are all valid reasons for behavioral changes.
-    \item \textbf{Real-time detection:} Expanding the framework to include real-time anomaly detection may be useful for providing additional reminders and messages during the exam, such as additional reminders about the honor code.
-    \item \textbf{Validation with real exam data:} Perhaps the most important avenue for extending this work is validation using real exam data and instructor-verified integrity outcomes for the examined students.
+    \item \textbf{Validation on real exam data:} The most important next step --- a corpus of real exam clickstreams with instructor-verified integrity outcomes would let the evaluation numbers actually bind.
+    \item \textbf{Scalable attribution:} Replace KernelSHAP with model-specific attribution (attention rollout, integrated gradients) to make per-session explanations feasible at classroom scale.
+    \item \textbf{Temporal baseline evolution:} Student behaviour drifts over a semester as they grow more comfortable with the interface. Online or streaming personalisation of the per-student baseline would let the system adapt to this.
+    \item \textbf{Multi-modal signals:} Typing rhythm, mouse-movement entropy, and focus-loss events would all strengthen the behavioural fingerprint without adding privacy cost.
+    \item \textbf{Federated learning:} Institution-local models with only aggregated gradients shared would allow cross-institution generalisation without moving student data.
+    \item \textbf{Causal reasoning:} Not every behavioural shift is cheating. Explicitly modelling alternative causes (anxiety, interface unfamiliarity, connectivity issues) would reduce false positives in deployment.
+    \item \textbf{Real-time detection:} Streaming inference during an exam, paired with soft nudges (e.g., honour-code reminders) rather than hard flags, is a promising non-punitive use of the same model.
 \end{itemize}
-
-% ============================================================
-% ACKNOWLEDGMENTS
-% ============================================================
-% TODO: Add acknowledgments if needed (advisor, funding, etc.)
 
 % ============================================================
 % REFERENCES

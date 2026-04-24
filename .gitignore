@@ -2,8 +2,13 @@
 EdNet-KT2/
 archive/
 
-# Processed data (keep raw results/models)
+# Processed data
 data/processed/
+
+# Large model variants (keep only lstm_ae, baselines, and plain models)
+results/models/transformer_ae/
+results/models/transformer_vae/
+results/models/lstm_vae/
 
 # Python
 __pycache__/

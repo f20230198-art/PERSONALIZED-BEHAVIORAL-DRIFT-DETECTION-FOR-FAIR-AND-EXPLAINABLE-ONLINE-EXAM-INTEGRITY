@@ -146,7 +146,7 @@ baselines:
 # Output
 output:
   models_dir: "results/models"
-  plots_dir: "results/plots"
+  plots_dir: "paper/figures"
   metrics_dir: "results/metrics"
   save_checkpoints: true
   checkpoint_frequency: 10  # epochs
