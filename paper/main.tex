@@ -345,6 +345,31 @@ A few observations are worth highlighting. (i) The supervised Transformer beats 
 \label{fig:lstm_curves}
 \end{figure}
 
+\subsection{Ablation: What Does the Transformer Actually Buy?}
+\label{sec:ablation}
+Because the Transformer and the BiLSTM classifier share the same training pipeline, the same GAN-augmented labels, the same action-level input representation, the same pooling strategy, and the same MLP head, the gap between them in Table~\ref{tab:main_results} isolates a single variable: \emph{the sequence encoder}. The Transformer's self-attention replaces the BiLSTM's recurrence, and nothing else differs.
+
+\begin{table}[htbp]
+\caption{Supervised-architecture ablation: Transformer vs BiLSTM, holding the training recipe fixed. The architecture is the only variable.}
+\label{tab:ablation_arch}
+\centering
+\small
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Encoder} & \textbf{ROC-AUC} & \textbf{PR-AUC} & \textbf{F1} & \textbf{Recall} \\
+\midrule
+BiLSTM                & 0.964 & 0.897 & 0.805 & 0.837 \\
+\textbf{Transformer}  & \textbf{0.975} & \textbf{0.930} & \textbf{0.832} & \textbf{0.894} \\
+\midrule
+$\Delta$              & $+0.011$ & $+0.033$ & $+0.027$ & $+0.057$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Attention buys a consistent but modest lift over recurrence ($+0.011$ ROC-AUC, $+0.033$ PR-AUC), with the largest gain on \emph{recall} ($+5.7$ points). We read this as evidence that self-attention helps the model catch the partial-session anomaly family (Section~\ref{subsec:datasets}), where the cheating transition can occur anywhere in the sequence and an unrestricted attention span is a better inductive bias than left-to-right state propagation. In absolute terms, however, \emph{supervision plus action-level features} is doing most of the heavy lifting: the BiLSTM on its own already crosses ROC-AUC $0.96$, i.e., almost all of the supervised lead over classical baselines is architecture-independent.
+
+Together with the Standard-AE vs LSTM-AE pair (flat vs sequence reconstruction, both self-supervised) and the Rule-Based floor, this triangulates the contribution of each design choice: representation (session-level $\rightarrow$ action-level) matters most, training regime (self-supervised $\rightarrow$ supervised) matters second, and encoder architecture (recurrence $\rightarrow$ attention) adds a smaller but reliable gain on top.
+
 \subsection{Fairness}
 Table~\ref{tab:fairness_results} reports demographic-parity and equalized-odds metrics for the Transformer detector, before and after per-group threshold calibration, across all four sensitive attributes.
 
@@ -398,6 +423,8 @@ Figures~\ref{fig:shap} and~\ref{fig:featimp} confirm the expected behaviour qual
 % ============================================================
 \section{Discussion}
 \label{sec:discussion}
+
+\textbf{From self-supervised to supervised: an honest framing.} The LSTM autoencoder was our initial formulation of the detection problem --- attractive because it required no anomaly labels --- and a substantial part of the infrastructure in this paper (the action-level feature extractor, the clean-only training protocol, the personalised blending) was built around it. In practice the reconstruction-error signal on action-level sequences did not separate normals from anomalies cleanly enough to be competitive (Table~\ref{tab:main_results}), which is what motivated the supervised Transformer formulation. We retain the LSTM-AE in the framework and in the results table rather than removing it, for two reasons: (i) it is the right model to reach for when no anomaly labels are available, and our framework should handle that case; and (ii) reporting it transparently is more useful to the LAK community than quietly dropping a weaker alternative. The limitation to acknowledge is that the \emph{design} of the framework --- action-level representation, clean-only training stats, per-student blending --- was shaped by what the LSTM-AE needed, and a purpose-built supervised-only pipeline might make somewhat different design choices.
 
 \textbf{Why the Transformer beats the LSTM-AE.} The LSTM-AE has to reconstruct the full action-level sequence, which is a much harder target than emitting a scalar logit. With 10 features over up to 100 actions, the reconstruction surface is bumpy; training on clean-only sessions helps but does not fully separate normals from anomalies in score space (visible in Figure~\ref{fig:scores}). The Transformer is directly optimised for the discrimination task and has an attention inductive bias well-suited to the partial-session anomalies (Section~\ref{subsec:datasets}) that have a transition point. This mirrors the broader trend of Transformers overtaking RNNs in sequential tasks once labels are available.
 
