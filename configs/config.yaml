@@ -6,7 +6,7 @@ data:
   oulad_path: "archive"
   processed_path: "data/processed"
   synthetic_path: "data/synthetic"
-  num_students: 15000  # Load 15K (up from 5K) for stronger model
+  num_students: 15000  # full dataset for headline run
   session_min_questions: 20
   session_max_questions: 50
   train_ratio: 0.7
@@ -54,7 +54,7 @@ model:
 # Plain Transformer Classifier (main proposed model — supervised)
 plain_classifiers:
   enabled: true
-  epochs: 50         # more epochs for best results
+  epochs: 50
   batch_size: 256
   learning_rate: 0.001
   patience: 10
@@ -83,11 +83,11 @@ gan:
 # Training
 training:
   batch_size: 256   # up from 32 — RTX 4060 has 8GB VRAM, small seq tensors easily fit
-  epochs: 300  # More epochs for larger model to converge
+  epochs: 300
   learning_rate: 0.001
   optimizer: "Adam"
   loss: "MSE"
-  early_stopping_patience: 30  # more patience for larger model
+  early_stopping_patience: 30
   weight_decay: 0.0001   # reverted from 0.0005 — over-regularization underfit normal sessions
   gradient_clip: 1.0
   device: "cuda"

@@ -342,21 +342,23 @@ class SyntheticAnomalyGenerator:
         anomaly_indices = set(random.sample(range(num_sessions), num_anomalies))
         
         labels = np.zeros(num_sessions, dtype=int)
+        families = np.array(["normal"] * num_sessions, dtype=object)
         processed_sessions = []
-        
+
         for i, session in enumerate(sessions):
             if i in anomaly_indices:
                 # Generate anomalous version
                 anomalous_session = self.generate_anomaly(session)
                 processed_sessions.append(anomalous_session)
                 labels[i] = 1
+                families[i] = "legacy_injection"
             else:
                 # Keep normal
                 processed_sessions.append(session)
-        
+
         print(f"Injected {num_anomalies} anomalies ({self.contamination_rate*100:.1f}%) into {num_sessions} sessions")
-        
-        return processed_sessions, labels
+
+        return processed_sessions, labels, families
 
 
 class DataPreprocessor:

@@ -174,27 +174,34 @@ class ClassifierTrainer:
     def train(self, X_train, y_train, L_train, X_val, y_val, L_val,
               epochs: int = 30, batch_size: int = 256, patience: int = 7,
               save_path: Optional[str] = None) -> dict:
-        train_ds = TensorDataset(
-            torch.FloatTensor(X_train), torch.FloatTensor(y_train),
-            torch.LongTensor(L_train)
-        )
-        val_ds = TensorDataset(
-            torch.FloatTensor(X_val), torch.FloatTensor(y_val),
-            torch.LongTensor(L_val)
-        )
-        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-                                  pin_memory=True, num_workers=2, persistent_workers=True)
-        val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
-                                pin_memory=True, num_workers=2, persistent_workers=True)
+        # Move ENTIRE dataset to GPU once (tensors are small, fit easily).
+        # Slicing GPU tensors directly is much faster than per-batch CPU->GPU
+        # transfer through a DataLoader for these tiny inputs.
+        Xt = torch.FloatTensor(X_train).to(self.device)
+        yt = torch.FloatTensor(y_train).to(self.device)
+        Lt = torch.LongTensor(L_train).to(self.device)
+        Xv = torch.FloatTensor(X_val).to(self.device)
+        yv = torch.FloatTensor(y_val).to(self.device)
+        Lv = torch.LongTensor(L_val).to(self.device)
+        n_train = Xt.size(0); n_val = Xv.size(0)
+
+        def _iter(X, y, L, n, shuffle):
+            idx = torch.randperm(n, device=self.device) if shuffle \
+                  else torch.arange(n, device=self.device)
+            for i in range(0, n, batch_size):
+                sel = idx[i:i + batch_size]
+                yield X[sel], y[sel], L[sel]
 
         best_val = float('inf'); bad = 0
         history = {"train_loss": [], "val_loss": []}
         for epoch in range(epochs):
             self.model.train()
-            tl = [self._run_batch(x, y, L, True) for x, y, L in train_loader]
+            tl = [self._run_batch(x, y, L, True)
+                  for x, y, L in _iter(Xt, yt, Lt, n_train, True)]
             self.model.eval()
             with torch.no_grad():
-                vl = [self._run_batch(x, y, L, False) for x, y, L in val_loader]
+                vl = [self._run_batch(x, y, L, False)
+                      for x, y, L in _iter(Xv, yv, Lv, n_val, False)]
             t_avg, v_avg = float(np.mean(tl)), float(np.mean(vl))
             history["train_loss"].append(t_avg)
             history["val_loss"].append(v_avg)

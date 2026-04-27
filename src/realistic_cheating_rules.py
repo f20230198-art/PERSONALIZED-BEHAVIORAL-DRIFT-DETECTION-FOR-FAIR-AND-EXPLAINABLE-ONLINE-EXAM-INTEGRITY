@@ -177,32 +177,62 @@ class RealisticCheatingGenerator:
         return self._rebuild_timestamps(anomalous, gaps)
 
     # ------------------------------------------------------------------
-    def generate_anomaly(self, session: pd.DataFrame) -> pd.DataFrame:
-        """Apply one primary cheating pattern + optional supplementary."""
-        primary = [
-            self.answer_copying,
-            self.lookup_behavior,
-            self.partial_session,
-            self.pre_known_answers,
-            self.panic_compression,
-        ]
-        result = random.choice(primary)(session)
+    # Family registry: name -> method. Used for per-family tracking and
+    # for held-out cross-distribution experiments.
+    FAMILY_NAMES = [
+        "answer_copying",
+        "lookup_behavior",
+        "partial_session",
+        "pre_known_answers",
+        "panic_compression",
+    ]
+
+    def _family_method(self, name: str):
+        return {
+            "answer_copying": self.answer_copying,
+            "lookup_behavior": self.lookup_behavior,
+            "partial_session": self.partial_session,
+            "pre_known_answers": self.pre_known_answers,
+            "panic_compression": self.panic_compression,
+        }[name]
+
+    def generate_anomaly(self, session: pd.DataFrame,
+                         allowed_families: List[str] = None) -> Tuple[pd.DataFrame, str]:
+        """Apply one primary cheating pattern + optional supplementary.
+
+        Returns (perturbed_session, primary_family_name).
+        """
+        families = allowed_families if allowed_families else self.FAMILY_NAMES
+        chosen = random.choice(families)
+        result = self._family_method(chosen)(session)
         if random.random() < 0.5:
             result = self.excessive_changes(result)
-        return result
+        return result, chosen
 
-    def inject_anomalies(self, sessions: List[pd.DataFrame]) -> Tuple[List[pd.DataFrame], np.ndarray]:
+    def inject_anomalies(self, sessions: List[pd.DataFrame],
+                         allowed_families: List[str] = None
+                         ) -> Tuple[List[pd.DataFrame], np.ndarray, np.ndarray]:
+        """Inject anomalies and return (sessions, labels, family_ids).
+
+        family_ids: array of strings, "normal" for unperturbed sessions,
+        otherwise the name of the primary family applied.
+        """
         num_sessions = len(sessions)
         num_anomalies = int(num_sessions * self.contamination_rate)
         anomaly_indices = set(random.sample(range(num_sessions), num_anomalies))
         labels = np.zeros(num_sessions, dtype=int)
+        families = np.array(["normal"] * num_sessions, dtype=object)
         processed = []
         for i, session in enumerate(sessions):
             if i in anomaly_indices:
-                processed.append(self.generate_anomaly(session))
+                perturbed, fam = self.generate_anomaly(session, allowed_families)
+                processed.append(perturbed)
                 labels[i] = 1
+                families[i] = fam
             else:
                 processed.append(session)
         print(f"[RealisticCheating] Injected {num_anomalies} realistic anomalies "
               f"({self.contamination_rate*100:.1f}%) into {num_sessions} sessions")
-        return processed, labels
+        if allowed_families:
+            print(f"  Allowed families: {allowed_families}")
+        return processed, labels, families

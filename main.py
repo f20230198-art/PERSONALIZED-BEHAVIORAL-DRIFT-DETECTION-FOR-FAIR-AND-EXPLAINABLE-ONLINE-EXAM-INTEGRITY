@@ -112,7 +112,15 @@ def preprocess_data(config):
             contamination_rate=config['data']['synthetic_contamination'],
             seed=config['training']['seed']
         )
-    sessions_with_anomalies, labels = anomaly_generator.inject_anomalies(sessions)
+    # Optional: restrict to a subset of anomaly families for cross-distribution
+    # generalization experiments (train on subset A, test on subset B).
+    allowed_families = config['data'].get('allowed_anomaly_families', None)
+    if method != 'injection' and allowed_families:
+        sessions_with_anomalies, labels, families = anomaly_generator.inject_anomalies(
+            sessions, allowed_families=allowed_families
+        )
+    else:
+        sessions_with_anomalies, labels, families = anomaly_generator.inject_anomalies(sessions)
 
     # Re-extract BOTH feature levels from anomalous sessions
     print("\nRe-extracting features after anomaly injection...")
@@ -197,6 +205,11 @@ def preprocess_data(config):
     y_train = labels[train_idx]
     y_val = labels[val_idx]
     y_test = labels[test_idx]
+
+    # Split anomaly family identifiers (for per-family evaluation)
+    fam_train = families[train_idx]
+    fam_val = families[val_idx]
+    fam_test = families[test_idx]
 
     # Split demographics
     demo_train = [demographics[i] for i in train_idx]
@@ -285,6 +298,8 @@ def preprocess_data(config):
 
             extra_sids = np.array([f"gan_synth_{i}" for i in range(n_added)], dtype=object)
             extra_labels = np.ones(n_added, dtype=int)
+            extra_families = np.array(["gan_augmented"] * n_added, dtype=object)
+            families = np.concatenate([families, extra_families], axis=0)
 
             # Extend the underlying arrays/lists. The chronological split is
             # already done; we append these to the train side only.
@@ -315,6 +330,7 @@ def preprocess_data(config):
             demo_train = [demographics[i] for i in train_idx]
             student_ids_arr = np.array(student_ids, dtype=object)
             sid_train = student_ids_arr[train_idx]
+            fam_train = families[train_idx]
 
             print(f"  Train set now: {len(train_idx)} samples "
                   f"({int(y_train.sum())} cheating, {int((y_train == 0).sum())} normal)")
@@ -370,6 +386,10 @@ def preprocess_data(config):
         'sid_train': sid_train,
         'sid_val': sid_val,
         'sid_test': sid_test,
+        # Anomaly family per session (for per-family evaluation)
+        'fam_train': fam_train,
+        'fam_val': fam_val,
+        'fam_test': fam_test,
     }
 
     ensure_dir(config['data']['processed_path'])
@@ -902,8 +922,40 @@ def evaluate_models(config, processed_data):
     if plain_tf_model is not None:
         pc_name = 'Plain-Transformer (Ours)'
         print(f"\nEvaluating {pc_name}...")
-        val_scores = _batched_supervised_scores(plain_tf_model, X_val_seq, L_val)
-        test_scores = _batched_supervised_scores(plain_tf_model, X_test_seq, L_test)
+        val_scores_raw = _batched_supervised_scores(plain_tf_model, X_val_seq, L_val)
+        test_scores_raw = _batched_supervised_scores(plain_tf_model, X_test_seq, L_test)
+
+        # ----- Personalized blended scoring on top of raw Transformer logits -----
+        # The Transformer is a population-level supervised classifier. To honour
+        # the "personalized drift" framing of the paper, we additionally blend
+        # each test session's score against that student's own historical score
+        # distribution (clean training sessions only), with cold-start weighting
+        # lambda_s = min(1, n_s / 5). Train scores come from clean sessions in
+        # train; eval blending is applied to validation (for thresholding) and
+        # test sets identically.
+        from src.train import personalize_scores
+        sid_train_clean_arr = processed_data.get('sid_train_clean')
+        sid_val_arr = processed_data.get('sid_val')
+        sid_test_arr = processed_data.get('sid_test')
+        if sid_train_clean_arr is not None and len(sid_train_clean_arr) > 0:
+            print(f"  Applying per-student blended scoring (lambda_s = min(1, n_s/5))")
+            X_train_clean_seq = X_train_seq_clean
+            L_train_clean_seq = L_train_clean
+            train_scores_clean = _batched_supervised_scores(
+                plain_tf_model, X_train_clean_seq, L_train_clean_seq
+            )
+            val_scores = personalize_scores(
+                train_scores_clean, val_scores_raw,
+                np.asarray(sid_train_clean_arr), np.asarray(sid_val_arr)
+            )
+            test_scores = personalize_scores(
+                train_scores_clean, test_scores_raw,
+                np.asarray(sid_train_clean_arr), np.asarray(sid_test_arr)
+            )
+        else:
+            print("  WARNING: no train student IDs available; using raw scores.")
+            val_scores = val_scores_raw
+            test_scores = test_scores_raw
 
         pc_thresh = select_optimal_threshold(y_val, val_scores, method='f1_weighted')
         print(f"  {pc_name} threshold: {pc_thresh:.4f}")
@@ -922,8 +974,31 @@ def evaluate_models(config, processed_data):
     if plain_lstm_model is not None:
         lstm_name = 'Plain-LSTM'
         print(f"\nEvaluating {lstm_name}...")
-        val_scores_lstm = _batched_supervised_scores(plain_lstm_model, X_val_seq, L_val)
-        test_scores_lstm = _batched_supervised_scores(plain_lstm_model, X_test_seq, L_test)
+        val_scores_lstm_raw = _batched_supervised_scores(plain_lstm_model, X_val_seq, L_val)
+        test_scores_lstm_raw = _batched_supervised_scores(plain_lstm_model, X_test_seq, L_test)
+
+        # Apply the same personalised blending used for the Transformer so the
+        # supervised-architecture ablation (BiLSTM vs. Transformer) is a fair
+        # apples-to-apples comparison: same training data, same scoring
+        # pipeline, only the encoder differs.
+        from src.train import personalize_scores
+        if (sid_train_clean_arr is not None and len(sid_train_clean_arr) > 0
+                and sid_val_arr is not None and sid_test_arr is not None):
+            print(f"  Applying per-student blended scoring to {lstm_name}")
+            train_scores_lstm_clean = _batched_supervised_scores(
+                plain_lstm_model, X_train_seq_clean, L_train_clean
+            )
+            val_scores_lstm = personalize_scores(
+                train_scores_lstm_clean, val_scores_lstm_raw,
+                np.asarray(sid_train_clean_arr), np.asarray(sid_val_arr)
+            )
+            test_scores_lstm = personalize_scores(
+                train_scores_lstm_clean, test_scores_lstm_raw,
+                np.asarray(sid_train_clean_arr), np.asarray(sid_test_arr)
+            )
+        else:
+            val_scores_lstm = val_scores_lstm_raw
+            test_scores_lstm = test_scores_lstm_raw
 
         lstm_thresh = select_optimal_threshold(y_val, val_scores_lstm, method='f1_weighted')
         print(f"  {lstm_name} threshold: {lstm_thresh:.4f}")
@@ -1148,7 +1223,7 @@ def main():
     parser.add_argument('--config', type=str, default='configs/config.yaml',
                        help='Path to configuration file')
     parser.add_argument('--mode', type=str, default='all',
-                       choices=['preprocess', 'train', 'evaluate', 'fairness', 'plots', 'explain', 'all'],
+                       choices=['preprocess', 'train', 'evaluate', 'fairness', 'plots', 'explain', 'analyze', 'all'],
                        help='Pipeline mode')
     parser.add_argument('--force-retrain', action='store_true',
                        help='Ignore existing checkpoints and retrain models from scratch')
@@ -1193,6 +1268,14 @@ def main():
 
     if args.mode in ['explain', 'all']:
         processed_data = explain_predictions(config, processed_data)
+
+    if args.mode in ['analyze', 'all']:
+        # Reviewer-driven analyses: bootstrap CIs, calibration curve,
+        # per-anomaly-family breakdown, cold-start buckets, error analysis.
+        if 'test_scores' not in processed_data:
+            processed_data = evaluate_models(config, processed_data)
+        from src.analysis import run_full_analysis
+        run_full_analysis(processed_data, config)
 
     print("\n" + "="*80)
     print("PIPELINE COMPLETE!")

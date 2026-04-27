@@ -164,22 +164,26 @@ class ConditionalGANTrainer:
         y: (N,) in {0, 1}                -- 0 normal, 1 cheating
         lengths: (N,)                    -- real sequence lengths
         """
-        X_t = torch.FloatTensor(X)
-        y_t = torch.LongTensor(y)
-        L_t = torch.LongTensor(lengths)
-        ds = TensorDataset(X_t, y_t, L_t)
-        loader = DataLoader(ds, batch_size=self.cfg.batch_size, shuffle=True,
-                            drop_last=True, pin_memory=True,
-                            num_workers=2, persistent_workers=True)
+        # Move ENTIRE dataset to GPU once. Tensors are tiny (~50MB total),
+        # easily fits in VRAM, and eliminates per-batch host->device copies
+        # that dominate runtime for small models. We then index directly.
+        X_t = torch.FloatTensor(X).to(self.device)
+        y_t = torch.LongTensor(y).to(self.device)
+        L_t = torch.LongTensor(lengths).to(self.device)
+        n_total = X_t.size(0)
+        bs = self.cfg.batch_size
+        n_batches = n_total // bs  # drop_last behaviour
 
         bce = nn.BCEWithLogitsLoss()
         history = {"d_loss": [], "g_loss": []}
         for epoch in range(self.cfg.epochs):
             d_losses, g_losses = [], []
-            for x_real, lbl, lens in loader:
-                x_real = x_real.to(self.device, non_blocking=True)
-                lbl = lbl.to(self.device, non_blocking=True)
-                lens = lens.to(self.device, non_blocking=True)
+            perm = torch.randperm(n_total, device=self.device)
+            for b in range(n_batches):
+                idx = perm[b * bs:(b + 1) * bs]
+                x_real = X_t[idx]
+                lbl = y_t[idx]
+                lens = L_t[idx]
                 bsz = x_real.size(0)
 
                 # ----- Discriminator -----

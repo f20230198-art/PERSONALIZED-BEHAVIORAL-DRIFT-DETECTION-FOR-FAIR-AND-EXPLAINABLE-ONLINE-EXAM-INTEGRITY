@@ -1,0 +1,160 @@
+IsolationForest:
+  accuracy: 0.6681756450882752
+  f1: 0.4064777327935223
+  false_negatives: 89
+  false_positives: 644
+  fpr: !!python/object/apply:numpy._core.multiarray.scalar
+  - &id001 !!python/object/apply:numpy.dtype
+    args:
+    - f8
+    - false
+    - true
+    state: !!python/tuple
+    - 3
+    - <
+    - null
+    - null
+    - null
+    - -1
+    - -1
+    - 0
+  - !!binary |
+    YbE1WGwN1j8=
+  pr_auc: 0.38527572956663747
+  precision: 0.28044692737430166
+  precision_at_10: 0.3
+  precision_at_50: 0.58
+  recall: 0.7382352941176471
+  roc_auc: 0.7709344411922072
+  tpr: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    oJ+fn5+f5z8=
+  true_negatives: 1225
+  true_positives: 251
+LSTM-AE:
+  accuracy: 0.6636487098234495
+  f1: 0.35559410234171723
+  false_negatives: 135
+  false_positives: 608
+  fpr: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    lhO1LtfR1D8=
+  pr_auc: 0.37249743325404205
+  precision: 0.2521525215252153
+  precision_at_10: 0.8
+  precision_at_50: 0.74
+  recall: 0.6029411764705882
+  roc_auc: 0.6920293960280741
+  tpr: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    S0tLS0tL4z8=
+  true_negatives: 1261
+  true_positives: 205
+OneClassSVM:
+  accuracy: 0.7252150294250792
+  f1: 0.38994974874371857
+  false_negatives: 146
+  false_positives: 461
+  fpr: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    ix4lNWySzz8=
+  pr_auc: 0.4695602207019269
+  precision: 0.2961832061068702
+  precision_at_10: 1.0
+  precision_at_50: 0.92
+  recall: 0.5705882352941176
+  roc_auc: 0.710911780442514
+  tpr: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    QkJCQkJC4j8=
+  true_negatives: 1408
+  true_positives: 194
+Plain-LSTM:
+  accuracy: 0.930285196921684
+  f1: 0.78
+  false_negatives: 67
+  false_positives: 87
+  fpr: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    ouoLzUPVpz8=
+  pr_auc: 0.8680030563629114
+  precision: 0.7583333333333333
+  precision_at_10: 1.0
+  precision_at_50: 1.0
+  recall: 0.8029411764705883
+  roc_auc: 0.942872879488874
+  tpr: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    srGxsbGx6T8=
+  true_negatives: 1782
+  true_positives: 273
+Plain-Transformer (Ours):
+  accuracy: 0.9502037120869171
+  f1: 0.8275862068965517
+  false_negatives: 76
+  false_positives: 34
+  fpr: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    vKVeAc6gkj8=
+  pr_auc: 0.8922171027217551
+  precision: 0.8859060402684564
+  precision_at_10: 1.0
+  precision_at_50: 1.0
+  recall: 0.7764705882352941
+  roc_auc: 0.9506483492273313
+  tpr: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    2djY2NjY6D8=
+  true_negatives: 1835
+  true_positives: 264
+RuleBased:
+  accuracy: 0.6708918062471707
+  f1: 0.32995391705069127
+  false_negatives: 161
+  false_positives: 566
+  fpr: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    f1v0KKlh0z8=
+  pr_auc: 0.1990415046199737
+  precision: 0.24026845637583893
+  precision_at_10: 0.3
+  precision_at_50: 0.18
+  recall: 0.5264705882352941
+  roc_auc: 0.6115089856167185
+  tpr: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    2djY2NjY4D8=
+  true_negatives: 1303
+  true_positives: 179
+StandardAutoencoder:
+  accuracy: 0.7030330466274333
+  f1: 0.37523809523809526
+  false_negatives: 143
+  false_positives: 513
+  fpr: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    h8hojw2R0T8=
+  pr_auc: 0.462959846326004
+  precision: 0.2774647887323944
+  precision_at_10: 1.0
+  precision_at_50: 0.98
+  recall: 0.5794117647058824
+  roc_auc: 0.7146917193843829
+  tpr: !!python/object/apply:numpy._core.multiarray.scalar
+  - *id001
+  - !!binary |
+    i4qKioqK4j8=
+  true_negatives: 1356
+  true_positives: 197

@@ -1,0 +1,278 @@
+{
+  "bootstrap_ci": {
+    "LSTM-AE": {
+      "roc_auc": {
+        "point": 0.6005951584114235,
+        "ci_low": 0.5730076173531184,
+        "ci_high": 0.6292914808838425,
+        "n_iter": 1000
+      },
+      "pr_auc": {
+        "point": 0.21841410397082905,
+        "ci_low": 0.19218441924203045,
+        "ci_high": 0.2533124781329738,
+        "n_iter": 1000
+      },
+      "f1": {
+        "point": 0.2463867859600826,
+        "ci_low": 0.22954915980832455,
+        "ci_high": 0.263518080284302,
+        "n_iter": 1000
+      }
+    },
+    "Plain-Transformer (Ours)": {
+      "roc_auc": {
+        "point": 0.9594974341811691,
+        "ci_low": 0.9500986412467155,
+        "ci_high": 0.9681678400034276,
+        "n_iter": 1000
+      },
+      "pr_auc": {
+        "point": 0.7840771564015548,
+        "ci_low": 0.745023332260524,
+        "ci_high": 0.8239207253848966,
+        "n_iter": 1000
+      },
+      "f1": {
+        "point": 0.7746591820368885,
+        "ci_low": 0.7494238323876037,
+        "ci_high": 0.7993709372019707,
+        "n_iter": 1000
+      }
+    },
+    "Plain-LSTM": {
+      "roc_auc": {
+        "point": 0.9506007362784471,
+        "ci_low": 0.9412275199314134,
+        "ci_high": 0.9595195897371007,
+        "n_iter": 1000
+      },
+      "pr_auc": {
+        "point": 0.7709452595240325,
+        "ci_low": 0.7311051521116375,
+        "ci_high": 0.8108399566969826,
+        "n_iter": 1000
+      },
+      "f1": {
+        "point": 0.7250193648334624,
+        "ci_low": 0.698176412007398,
+        "ci_high": 0.7513695059328156,
+        "n_iter": 1000
+      }
+    },
+    "IsolationForest": {
+      "roc_auc": {
+        "point": 0.7676082106202586,
+        "ci_low": 0.745898814302439,
+        "ci_high": 0.7884460028735393,
+        "n_iter": 1000
+      },
+      "pr_auc": {
+        "point": 0.3771178052125249,
+        "ci_low": 0.33798892744631825,
+        "ci_high": 0.421097042196414,
+        "n_iter": 1000
+      },
+      "f1": {
+        "point": 0.41048522030117124,
+        "ci_low": 0.3820910161035269,
+        "ci_high": 0.4377491795018453,
+        "n_iter": 1000
+      }
+    },
+    "OneClassSVM": {
+      "roc_auc": {
+        "point": 0.718569834895136,
+        "ci_low": 0.6907071022309564,
+        "ci_high": 0.7448874431828795,
+        "n_iter": 1000
+      },
+      "pr_auc": {
+        "point": 0.4631105064460205,
+        "ci_low": 0.42116848074876406,
+        "ci_high": 0.5034242464084403,
+        "n_iter": 1000
+      },
+      "f1": {
+        "point": 0.441017733230532,
+        "ci_low": 0.4079247204324965,
+        "ci_high": 0.47468679138321995,
+        "n_iter": 1000
+      }
+    },
+    "RuleBased": {
+      "roc_auc": {
+        "point": 0.5879426037483266,
+        "ci_low": 0.5640931184949731,
+        "ci_high": 0.6107813502045479,
+        "n_iter": 1000
+      },
+      "pr_auc": {
+        "point": 0.170747864233019,
+        "ci_low": 0.15452467903731248,
+        "ci_high": 0.18741418011539984,
+        "n_iter": 1000
+      },
+      "f1": {
+        "point": 0.010434782608695653,
+        "ci_low": 0.0,
+        "ci_high": 0.025142213710172306,
+        "n_iter": 1000
+      }
+    },
+    "StandardAutoencoder": {
+      "roc_auc": {
+        "point": 0.7179953145917002,
+        "ci_low": 0.6931904072268957,
+        "ci_high": 0.7435386410463057,
+        "n_iter": 1000
+      },
+      "pr_auc": {
+        "point": 0.45090839726434206,
+        "ci_low": 0.4093763387011467,
+        "ci_high": 0.4911118495356339,
+        "n_iter": 1000
+      },
+      "f1": {
+        "point": 0.34835443037974684,
+        "ci_low": 0.3208647927575043,
+        "ci_high": 0.37329759081665875,
+        "n_iter": 1000
+      }
+    }
+  },
+  "per_family": {
+    "answer_copying": {
+      "n_anomalies": 116,
+      "n_normals_compared": 3320,
+      "recall": 0.9827586206896551,
+      "roc_auc_vs_normals": 0.9807462609056918
+    },
+    "lookup_behavior": {
+      "n_anomalies": 106,
+      "n_normals_compared": 3320,
+      "recall": 0.9339622641509434,
+      "roc_auc_vs_normals": 0.9717293703114345
+    },
+    "panic_compression": {
+      "n_anomalies": 103,
+      "n_normals_compared": 3320,
+      "recall": 0.7961165048543689,
+      "roc_auc_vs_normals": 0.9312989823371155
+    },
+    "partial_session": {
+      "n_anomalies": 99,
+      "n_normals_compared": 3320,
+      "recall": 0.9696969696969697,
+      "roc_auc_vs_normals": 0.9745983935742972
+    },
+    "pre_known_answers": {
+      "n_anomalies": 116,
+      "n_normals_compared": 3320,
+      "recall": 0.7931034482758621,
+      "roc_auc_vs_normals": 0.9392215413377648
+    }
+  },
+  "cold_start": {
+    "prior_1-2": {
+      "n_test": 196,
+      "n_anomalies": 27,
+      "roc_auc": 0.9539776462853387,
+      "f1": 0.6944444444444444,
+      "precision": 0.5555555555555556,
+      "recall": 0.9259259259259259
+    },
+    "prior_3-4": {
+      "n_test": 396,
+      "n_anomalies": 49,
+      "roc_auc": 0.9601246838793154,
+      "f1": 0.7244094488188977,
+      "precision": 0.5897435897435898,
+      "recall": 0.9387755102040817
+    },
+    "prior_5-999": {
+      "n_test": 3268,
+      "n_anomalies": 464,
+      "roc_auc": 0.9603322224408481,
+      "f1": 0.7855100095328885,
+      "precision": 0.7042735042735043,
+      "recall": 0.8879310344827587
+    }
+  },
+  "error_analysis": {
+    "top_false_positives": [
+      {
+        "index": 2077,
+        "score": 3057.5712890625,
+        "label": 0,
+        "family": "normal",
+        "student_id": "u261015"
+      },
+      {
+        "index": 2076,
+        "score": 2996.00048828125,
+        "label": 0,
+        "family": "normal",
+        "student_id": "u261015"
+      },
+      {
+        "index": 2398,
+        "score": 2094.612548828125,
+        "label": 0,
+        "family": "normal",
+        "student_id": "u275316"
+      },
+      {
+        "index": 2596,
+        "score": 1699.6239013671875,
+        "label": 0,
+        "family": "normal",
+        "student_id": "u283084"
+      },
+      {
+        "index": 2893,
+        "score": 1474.0927734375,
+        "label": 0,
+        "family": "normal",
+        "student_id": "u3024"
+      }
+    ],
+    "top_false_negatives": [
+      {
+        "index": 270,
+        "score": -1.6496074199676514,
+        "label": 1,
+        "family": "panic_compression",
+        "student_id": "u11304"
+      },
+      {
+        "index": 1304,
+        "score": -0.5196384787559509,
+        "label": 1,
+        "family": "partial_session",
+        "student_id": "u1802"
+      },
+      {
+        "index": 3437,
+        "score": -0.413327693939209,
+        "label": 1,
+        "family": "pre_known_answers",
+        "student_id": "u3380"
+      },
+      {
+        "index": 2519,
+        "score": -0.244796022772789,
+        "label": 1,
+        "family": "pre_known_answers",
+        "student_id": "u280770"
+      },
+      {
+        "index": 1250,
+        "score": -0.2247944325208664,
+        "label": 1,
+        "family": "panic_compression",
+        "student_id": "u1786"
+      }
+    ]
+  }
+}
